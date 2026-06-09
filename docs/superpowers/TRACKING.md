@@ -5,54 +5,54 @@ Resume pointer for the work specified in
 and planned in
 [`plans/2026-06-09-theme-files-and-transparency.md`](plans/2026-06-09-theme-files-and-transparency.md).
 
-## Status: planning complete, implementation not started
+## Status: Phase A complete
 
-Last updated: 2026-06-09.
+Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 
 ### Phase A progress (14 tasks)
 
-| # | Task | Status |
-|---|---|---|
-| 0 | Reset working tree (revert exploratory catppuccin patch) | not started |
-| 1 | Add `xdg_config_dir()` helper to config.rs | not started |
-| 2 | Switch `config_path()` to use `xdg_config_dir()` | not started |
-| 3 | Add `theme_background` field to `AppConfig` | not started |
-| 4 | Split `src/theme.rs` into `src/theme/` module | not started |
-| 5 | Add `parse_hex` to `src/theme/loader.rs` | not started |
-| 6 | Add `parse_theme_body` to the loader | not started |
-| 7 | Add `apply_overrides` | not started |
-| 8 | Embed `btop` theme as parity sentinel | not started |
-| 9 | Embed the remaining 11 themes | not started |
-| 10 | Add `Theme::load_or_default` and update `by_name` | not started |
-| 11 | Wire startup and `cycle_theme` to the new chain | not started |
-| 12 | Delete the 12 Rust constructors | not started |
-| 13 | Update README | not started |
-| 14 | Build release and install to `~/.local/libexec/abtop` | not started |
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 0 | Reset working tree (revert exploratory catppuccin patch) | done | — |
+| 1 | Add `xdg_config_dir()` helper to config.rs | done | `e32c20e` + `2ae2a21` (doc fixup) |
+| 2 | Switch `config_path()` to use `xdg_config_dir()` | done | `15de9eb` + `c9f388c` (test tightening) |
+| 3 | Add `theme_background` field to `AppConfig` | done | `48a236c` |
+| 4 | Split `src/theme.rs` into `src/theme/` module | done | `6d886e0` + `8cc1929` (cleanup) |
+| 5 | Add `parse_hex` to `src/theme/loader.rs` | done | `05e7007` |
+| 6 | Add `parse_theme_body` to the loader | done | `8f8307b` |
+| 7 | Add `apply_overrides` | done | `d83dd89` |
+| 8 | Embed `btop` theme as parity sentinel | done | `37e9a15` |
+| 9 | Embed the remaining 11 themes | done | `4ffed1a` |
+| 10 | Add `Theme::load_or_default` and update `by_name` | done | `df4243d` |
+| 11 | Wire startup and `cycle_theme` to the new chain | done | `54d0202` |
+| 12 | Delete the 12 Rust constructors | done | `d43bfc3` |
+| 13 | Update README | done | `a2d2acc` |
+| 14 | Build release and install to `~/.local/libexec/abtop` | done | (no commit — install side effect) |
 
-Update this table as each task lands (check off the box and bump status).
+## Acceptance criteria (verified)
 
-## Working-tree state at handoff
+- ✅ `cargo test --lib` is green (202 tests).
+- ✅ `cargo build --release` produces a working binary.
+- ✅ `abtop --once` runs without panicking.
+- ✅ Three smoke tests pass:
+  - Default snapshot output.
+  - `theme = "catppuccin"` + `theme_background = false` in `~/.config/abtop/config.toml`.
+  - User-defined `~/.config/abtop/themes/loud.theme` resolved via `--theme loud`.
+- ✅ Binary installed at `~/.local/libexec/abtop` (on PATH via env-osx.zsh).
 
-- `src/theme.rs` has an uncommitted exploratory patch (catppuccin `main_bg → Color::Reset`). Task 0 reverts this — that's the first thing to do on resume.
-- `target/release/abtop` may exist from a previous `cargo build`; harmless, will be overwritten by Task 14.
-- Spec committed at `d0af5fe`, plan committed at `b771ebc`. Both on `main`.
+## Visual confirmation pending
 
-## Decisions locked in during brainstorming
+The end-to-end transparency check requires running the interactive TUI in a terminal that has transparency configured. The CLI smoke tests don't exercise that visual path. Run `abtop` in a transparent-bg terminal (Alacritty / Ghostty / iTerm2 with transparency on) to confirm the catppuccin background shows through.
 
-- **File format**: btop-compatible `theme[key]="#hex"` shell-array syntax. 39 keys per theme (24 colors + 5 gradients × 3 channels). Empty value = `Color::Reset` for `Color` fields; for gradient channels empty = fall back to embedded `btop` default.
-- **Bundled strategy**: all 12 current themes become embedded `themes/*.theme` files included via `include_str!`. Rust constructors deleted in Task 12.
-- **Transparency knob**: BOTH file-level (`theme[main_bg]=""`) and global config flag (`theme_background = false`). Global override wins.
-- **Path resolution**: new `xdg_config_dir()` helper resolves `$XDG_CONFIG_HOME` → `$HOME/.config` → `.`. Applied uniformly to `config.toml` and `themes/`. On macOS this moves the config file from `~/Library/Application Support/abtop/` to `~/.config/abtop/` (no migration in Phase A — target machine has no existing config).
-- **Two entry points**: `Theme::by_name(name) -> Option<Self>` (validation, no fallback) + `Theme::load_or_default(name, &cfg) -> Self` (startup, full chain). Spec section "Module shape" has details.
-- **Scope**: Phase A only. Phase B follow-ups (t-cycle of user themes, banner UI on bad file, `--list-themes`, `--dump-theme`, reload-on-edit) listed at the bottom of the spec and plan.
+## Phase B (deferred — separate spec)
 
-## Resume from cold start
+- `t`-cycle merges user-dir themes with embedded set.
+- Banner in UI on malformed theme file.
+- `abtop --theme <absolute-path>`.
+- `abtop --list-themes`, `abtop --dump-theme <name>`.
+- Reload-on-file-change.
+- macOS `~/Library/Application Support/abtop/config.toml` → XDG migration.
 
-1. `cd /Users/a.salvi/my-workspace/util/abtop`
-2. `git log --oneline -5` — should show `b771ebc docs: add implementation plan...` and `d0af5fe docs: add design spec...` on top.
-3. Read this file for current task pointer, then open the plan and start at the next unchecked task.
-4. Execution mode is undecided (subagent-driven vs inline `executing-plans`). Decide before starting Task 0.
+## Minor known issues (non-blocking)
 
-## Why this work exists
-
-User wants a transparent catppuccin background in abtop (so the terminal's own background shows through), mirroring how btop achieves it with `theme_background = false` in `btop.conf`. The proper fix is to externalize abtop's hardcoded Rust themes into `.theme` files + add the same config knob, rather than maintaining a one-off catppuccin patch in the local fork. The fork lives at `~/my-workspace/util/abtop` and stays local — no upstream PR.
+- Spec text section "Theme file format" says "39 keys total (24 + 15)"; the actual key count is 33 (12 base + 2 semantic + 4 box-border + 15 gradient channels). Implementation matches reality at 33; the prose drift is in the spec doc only.
