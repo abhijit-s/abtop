@@ -68,6 +68,48 @@ tmux new -s work
 # → Enter on a session in abtop jumps to its pane
 ```
 
+## Theming
+
+abtop ships with 12 embedded themes. Pick one with `--theme <name>` or set
+`theme = "<name>"` in `$XDG_CONFIG_HOME/abtop/config.toml` (default
+`~/.config/abtop/config.toml`).
+
+Available: `btop`, `dracula`, `catppuccin`, `tokyo-night`, `gruvbox`,
+`nord`, `light`, `white`, `high-contrast`, `protanopia`, `deuteranopia`,
+`tritanopia`.
+
+### Custom themes
+
+Drop a `*.theme` file into `$XDG_CONFIG_HOME/abtop/themes/` and reference
+it by file basename. The format is btop-compatible:
+
+```sh
+# ~/.config/abtop/themes/my-theme.theme
+theme[main_bg]="#1e1e2e"      # 6-digit hex, or empty for terminal default
+theme[main_fg]="#cdd6f4"
+theme[selected_bg]="#313244"
+# ... see themes/btop.theme in the source tree for the full key list
+```
+
+Missing keys inherit from the embedded `btop` theme. Empty values on any
+`Color` field render as `Color::Reset` (the terminal's own default), which
+on terminals with transparency configured lets the background show through.
+
+User-dir files override embedded themes of the same name.
+
+### Transparent background
+
+Add `theme_background = false` to your `config.toml` to force `main_bg` to
+the terminal default for any theme — no need to edit the theme file:
+
+```toml
+theme = "catppuccin"
+theme_background = false
+```
+
+`selected_bg` and `meter_bg` keep their theme values (they're visible-state
+indicators, not the window background).
+
 ## Supported Agents
 
 | Feature           | Claude Code | Codex CLI | OpenCode |
