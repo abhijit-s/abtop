@@ -10,7 +10,7 @@ mod loader;
 // but nothing outside the crate should bind to these names (the crate is
 // published to crates.io and these are wiring details, not stable API).
 pub(crate) use loader::{
-    apply_overrides, dump_embedded, list_available, load_or_default, Source,
+    apply_overrides, dump_embedded, list_available, load_from_path, load_or_default, Source,
 };
 
 mod embedded;
