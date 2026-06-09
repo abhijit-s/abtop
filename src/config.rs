@@ -376,11 +376,10 @@ mod tests {
 
     #[test]
     fn config_path_uses_xdg_config_dir() {
+        // Strict equality against the XDG-derived expected path so this test
+        // fails on macOS if config_path() ever regresses to dirs::config_dir().
         let path = config_path().expect("config_path should resolve");
-        let mut iter = path.components().rev();
-        assert_eq!(iter.next().unwrap().as_os_str(), "config.toml");
-        assert_eq!(iter.next().unwrap().as_os_str(), "abtop");
-        let third = iter.next().unwrap().as_os_str().to_string_lossy().to_string();
-        assert!(!third.is_empty() && third != "/", "got parent: {third}");
+        let expected = xdg_config_dir().join("abtop").join("config.toml");
+        assert_eq!(path, expected);
     }
 }
