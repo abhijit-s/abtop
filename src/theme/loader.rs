@@ -2,6 +2,7 @@
 
 use ratatui::style::Color;
 
+use crate::config::AppConfig;
 use crate::theme::Theme;
 
 /// Parse a hex color string with required `#` prefix.
@@ -118,9 +119,26 @@ pub fn parse_theme_body(body: &str, name: &str) -> Theme {
     theme
 }
 
+/// Apply config-level overrides on top of a parsed Theme.
+///
+/// Currently the only override is `theme_background = false`, which stamps
+/// `Color::Reset` over `main_bg`. Other background fields (selected_bg,
+/// meter_bg) are left alone — they're indicators, not the window background.
+pub fn apply_overrides(theme: &mut Theme, cfg: &AppConfig) {
+    if !cfg.theme_background {
+        theme.main_bg = Color::Reset;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cfg_with_bg(bg: bool) -> crate::config::AppConfig {
+        let mut c = crate::config::AppConfig::default();
+        c.theme_background = bg;
+        c
+    }
 
     #[test]
     fn parse_hex_6_digit_uppercase() {
@@ -258,5 +276,40 @@ theme[cached_grad_end]="#616263"
         let t = parse_theme_body(body, "full");
         assert_eq!(t.main_bg, Color::Rgb(1, 2, 3));
         assert_eq!(t.cached_grad.end, (0x61, 0x62, 0x63));
+    }
+
+    #[test]
+    fn apply_overrides_force_transparent_with_opaque_theme() {
+        let mut t = Theme::btop();
+        let original_bg = t.main_bg;
+        apply_overrides(&mut t, &cfg_with_bg(false));
+        assert_eq!(t.main_bg, Color::Reset);
+        assert_ne!(t.main_bg, original_bg);
+    }
+
+    #[test]
+    fn apply_overrides_keep_theme_when_flag_default_true() {
+        let mut t = Theme::btop();
+        let original_bg = t.main_bg;
+        apply_overrides(&mut t, &cfg_with_bg(true));
+        assert_eq!(t.main_bg, original_bg);
+    }
+
+    #[test]
+    fn apply_overrides_leaves_other_bg_fields_alone() {
+        let mut t = Theme::btop();
+        let original_selected = t.selected_bg;
+        let original_meter = t.meter_bg;
+        apply_overrides(&mut t, &cfg_with_bg(false));
+        assert_eq!(t.selected_bg, original_selected);
+        assert_eq!(t.meter_bg, original_meter);
+    }
+
+    #[test]
+    fn apply_overrides_already_reset_main_bg_stays_reset() {
+        let mut t = Theme::btop();
+        t.main_bg = Color::Reset;
+        apply_overrides(&mut t, &cfg_with_bg(true));
+        assert_eq!(t.main_bg, Color::Reset);
     }
 }

@@ -6,9 +6,8 @@ mod types;
 pub use types::{Gradient, Theme};
 
 mod loader;
-pub use loader::parse_theme_body;
+pub use loader::{apply_overrides, parse_theme_body};
 // Additional loader exports:
-//   apply_overrides   (Task 7)
 //   load_or_default   (Task 10)
 
 use ratatui::style::Color;
