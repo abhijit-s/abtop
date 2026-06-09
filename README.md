@@ -114,6 +114,11 @@ Empty values on the `*_grad_*` gradient channels fall back to btop's
 gradient instead — gradients are RGB tuples and have no terminal-default
 representation.
 
+If your file contains malformed lines (bad hex, unknown keys, missing
+quotes), abtop shows a 3-second footer banner at launch with the error
+count. The theme still loads — the broken fields fall back to btop
+defaults — so you can iterate without abtop becoming unusable.
+
 User-dir files override embedded themes of the same name. Custom themes also
 join the `t`-key cycle at startup; mid-session additions require a restart.
 
