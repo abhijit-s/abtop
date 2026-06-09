@@ -312,4 +312,26 @@ theme[cached_grad_end]="#616263"
         apply_overrides(&mut t, &cfg_with_bg(true));
         assert_eq!(t.main_bg, Color::Reset);
     }
+
+    #[test]
+    fn embedded_btop_matches_rust_constructor() {
+        let body = crate::theme::embedded::lookup("btop")
+            .expect("btop must be in BUILTIN");
+        let parsed = parse_theme_body(body, "btop");
+        let from_rust = Theme::btop();
+        assert_eq!(parsed, from_rust, "embedded btop.theme drifted from Theme::btop()");
+    }
+
+    #[test]
+    fn theme_names_const_includes_all_embedded() {
+        // Relaxed for Task 8 (only btop is embedded); Task 9 tightens this.
+        let embedded_set: std::collections::HashSet<&str> =
+            crate::theme::embedded::BUILTIN.iter().map(|(n, _)| *n).collect();
+        for name in embedded_set {
+            assert!(
+                crate::theme::THEME_NAMES.contains(&name),
+                "'{name}' is in BUILTIN but not in THEME_NAMES"
+            );
+        }
+    }
 }

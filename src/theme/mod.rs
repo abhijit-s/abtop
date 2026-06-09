@@ -7,6 +7,8 @@ pub use types::{Gradient, Theme};
 
 mod loader;
 pub use loader::{apply_overrides, parse_theme_body};
+
+mod embedded;
 // Additional loader exports:
 //   load_or_default   (Task 10)
 
