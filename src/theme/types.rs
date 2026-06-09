@@ -1,4 +1,4 @@
-//! Theme data types. No logic, no constructors — those live in `loader` / `embedded`.
+//! Theme data types. No logic — see the parent module for constructors and lookup.
 
 use ratatui::style::Color;
 

@@ -46,7 +46,7 @@ pub(crate) fn draw_config_overlay(f: &mut Frame, app: &App, theme: &Theme) {
     let on_str = t("config.on");
     let off_str = t("config.off");
     let items: Vec<(String, String)> = vec![
-        (theme_label, app.theme.name.to_string()),
+        (theme_label, app.theme.name.clone()),
         (
             t("config.context_panel"),
             toggle_str(&on_str, &off_str, app.show_context),
