@@ -216,17 +216,40 @@ fn apply_body(theme: &mut Theme, body: &str) {
     }
 }
 
-/// Parse a btop-style theme body. Returns a fully-populated Theme: the
-/// embedded btop body is applied first so missing keys inherit btop's
-/// values, then the caller's body overrides on top.
-pub fn parse_theme_body(body: &str, name: &str) -> Theme {
+/// Parse a btop-style theme body and collect any parse errors. The
+/// returned Theme is always fully populated: missing keys inherit from
+/// the embedded btop default, and lines with errors are accumulated in
+/// the errors vec so the caller can surface them to the user.
+pub(crate) fn parse_theme_body_with_errors(body: &str, name: &str) -> (Theme, Vec<ParseError>) {
     let mut theme = empty_theme();
     let btop_body = crate::theme::embedded::lookup("btop")
         .expect("embedded btop is a build-time invariant");
     apply_body(&mut theme, btop_body);
-    apply_body(&mut theme, body);
+
+    let mut errors = Vec::new();
+    for (idx, raw_line) in body.lines().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = raw_line.trim();
+        if !trimmed.starts_with("theme[") {
+            continue;
+        }
+        match classify_line(trimmed) {
+            Ok((k, v)) => apply_kv(&mut theme, k, v),
+            Err(reason) => errors.push(ParseError {
+                line: line_no,
+                content: trimmed.to_string(),
+                reason,
+            }),
+        }
+    }
     theme.name = name.to_string();
-    theme
+    (theme, errors)
+}
+
+/// Thin wrapper that discards parse errors. Existing callers that don't
+/// care about errors keep working unchanged.
+pub fn parse_theme_body(body: &str, name: &str) -> Theme {
+    parse_theme_body_with_errors(body, name).0
 }
 
 /// Apply config-level overrides on top of a parsed Theme.
@@ -1058,5 +1081,78 @@ theme[cached_grad_end]="#616263"
             result,
             Err(ParseErrorReason::InvalidHex("not-a-color".to_string()))
         );
+    }
+
+    #[test]
+    fn parse_theme_body_with_errors_reports_invalid_hex() {
+        let body = r##"theme[main_bg]="#XYZ""##;
+        let (_, errors) = parse_theme_body_with_errors(body, "test");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 1);
+        assert_eq!(errors[0].reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+    }
+
+    #[test]
+    fn parse_theme_body_with_errors_reports_unknown_key() {
+        let body = r##"theme[wrong_key]="#fff""##;
+        let (_, errors) = parse_theme_body_with_errors(body, "test");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].reason,
+            ParseErrorReason::UnknownKey("wrong_key".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_theme_body_with_errors_reports_malformed_lines() {
+        let body = "theme[main_bg]=missing_quote\ntheme[main_bg";
+        let (_, errors) = parse_theme_body_with_errors(body, "test");
+        assert_eq!(errors.len(), 2);
+        assert!(errors.iter().all(|e| e.reason == ParseErrorReason::Malformed));
+    }
+
+    #[test]
+    fn parse_theme_body_with_errors_includes_correct_line_numbers() {
+        let body = "# header comment\n\ntheme[main_bg]=\"#XYZ\"\ntheme[main_fg]=\"#abcdef\"\n\ntheme[wrong_key]=\"#fff\"";
+        let (_, errors) = parse_theme_body_with_errors(body, "test");
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].line, 3);
+        assert_eq!(errors[1].line, 6);
+    }
+
+    #[test]
+    fn parse_theme_body_with_errors_ignores_comments_and_blanks() {
+        let body = "# comment\n\n# another comment\nsome random text\n";
+        let (_, errors) = parse_theme_body_with_errors(body, "test");
+        assert_eq!(errors.len(), 0);
+    }
+
+    #[test]
+    fn parse_theme_body_with_errors_clean_file_returns_no_errors() {
+        let body = crate::theme::embedded::lookup("catppuccin").expect("in BUILTIN");
+        let (_, errors) = parse_theme_body_with_errors(body, "catppuccin");
+        assert_eq!(errors.len(), 0);
+    }
+
+    #[test]
+    fn every_embedded_theme_parses_with_zero_errors() {
+        // Locks in the "embedded = always clean" invariant.
+        for (name, body) in crate::theme::embedded::BUILTIN.iter() {
+            let (_, errors) = parse_theme_body_with_errors(body, name);
+            assert!(
+                errors.is_empty(),
+                "embedded theme '{name}' produced unexpected errors: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_theme_body_wrapper_discards_errors() {
+        let body = r##"theme[main_bg]="#XYZ""##;
+        let t = parse_theme_body(body, "test");
+        assert_eq!(t.name, "test");
+        // main_bg falls back to btop default since the bad hex was ignored.
+        use ratatui::style::Color;
+        assert_eq!(t.main_bg, Color::Rgb(0x19, 0x19, 0x19));
     }
 }
