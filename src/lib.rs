@@ -250,6 +250,51 @@ pub fn run() -> io::Result<()> {
             None => theme::load_or_default_with_errors(&cfg.theme, &cfg),
         };
 
+    // Compute the source-of-truth path for runtime reloads (B5). None for
+    // embedded-only themes; Some(path, mtime) for user-dir files and
+    // --theme <path> args.
+    let theme_source: Option<crate::app::ThemeSource> = match &cli_theme_name {
+        Some(arg) if is_theme_path_arg(arg) => {
+            let path = expand_tilde(arg);
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            Some(crate::app::ThemeSource { path, mtime })
+        }
+        Some(name) => {
+            let user_path = config::xdg_config_dir()
+                .join("abtop")
+                .join("themes")
+                .join(format!("{name}.theme"));
+            if user_path.exists() {
+                let mtime = std::fs::metadata(&user_path)
+                    .and_then(|m| m.modified())
+                    .ok();
+                Some(crate::app::ThemeSource {
+                    path: user_path,
+                    mtime,
+                })
+            } else {
+                None
+            }
+        }
+        None => {
+            let user_path = config::xdg_config_dir()
+                .join("abtop")
+                .join("themes")
+                .join(format!("{}.theme", cfg.theme));
+            if user_path.exists() {
+                let mtime = std::fs::metadata(&user_path)
+                    .and_then(|m| m.modified())
+                    .ok();
+                Some(crate::app::ThemeSource {
+                    path: user_path,
+                    mtime,
+                })
+            } else {
+                None
+            }
+        }
+    };
+
     let demo_mode = std::env::args().any(|a| a == "--demo");
     let exit_on_jump = std::env::args().any(|a| a == "--exit-on-jump");
 
@@ -260,6 +305,7 @@ pub fn run() -> io::Result<()> {
     if std::env::args().any(|a| a == "--json") {
         let mut app = build_app(initial_theme.clone(), &cfg);
         set_parse_error_status(&mut app, &parse_errors);
+        app.set_theme_source(theme_source.clone());
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -281,6 +327,7 @@ pub fn run() -> io::Result<()> {
     if std::env::args().any(|a| a == "--once") {
         let mut app = build_app(initial_theme.clone(), &cfg);
         set_parse_error_status(&mut app, &parse_errors);
+        app.set_theme_source(theme_source.clone());
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -314,6 +361,7 @@ pub fn run() -> io::Result<()> {
         cfg.panels,
         &cfg.claude_config_dirs,
         &parse_errors,
+        theme_source.clone(),
     );
 
     // Always attempt both cleanup steps regardless of app result
@@ -334,6 +382,7 @@ fn run_app(
     panels: config::PanelVisibility,
     claude_config_dirs: &[std::path::PathBuf],
     parse_errors: &[theme::ParseError],
+    theme_source: Option<crate::app::ThemeSource>,
 ) -> io::Result<()> {
     let mut app = App::new_with_config_and_claude_dirs(
         initial_theme,
@@ -342,6 +391,7 @@ fn run_app(
         claude_config_dirs,
     );
     set_parse_error_status(&mut app, parse_errors);
+    app.set_theme_source(theme_source);
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
