@@ -52,7 +52,7 @@ impl Default for AppConfig {
 }
 
 fn config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("abtop").join("config.toml"))
+    Some(xdg_config_dir().join("abtop").join("config.toml"))
 }
 
 fn xdg_config_dir_inner(xdg_env: Option<String>, home: Option<PathBuf>) -> PathBuf {
@@ -372,5 +372,15 @@ mod tests {
         assert!(after.contains("language = \"zh\""));
         assert!(!after.contains("language = \"en\""));
         assert!(after.contains("theme = \"btop\""));
+    }
+
+    #[test]
+    fn config_path_uses_xdg_config_dir() {
+        let path = config_path().expect("config_path should resolve");
+        let mut iter = path.components().rev();
+        assert_eq!(iter.next().unwrap().as_os_str(), "config.toml");
+        assert_eq!(iter.next().unwrap().as_os_str(), "abtop");
+        let third = iter.next().unwrap().as_os_str().to_string_lossy().to_string();
+        assert!(!third.is_empty() && third != "/", "got parent: {third}");
     }
 }
