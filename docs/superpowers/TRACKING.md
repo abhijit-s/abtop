@@ -86,6 +86,20 @@ B1 (`--list-themes` / `--dump-theme`) shipped. Still open:
 - B5: Reload-on-file-change.
 - B6: macOS `~/Library/Application Support/abtop/config.toml` → XDG migration (skip unless we ever share this fork).
 
+## Final whole-Phase-B1 review
+
+Ran a single subagent over the full B1 diff to catch cross-cutting issues. Verdict: approved with one Important tightening, landed in commit `03a2756`:
+
+- `dump_embedded`, `list_available`, `apply_overrides`, `load_or_default`, `Source` narrowed from `pub use` to `pub(crate) use` in `theme/mod.rs`. The crates.io-visible API stays as just `Theme`, `Gradient`, `Theme::by_name` — the B1 internals are wiring details, not stable library surface. `ThemeListing` dropped from the re-export entirely since no in-crate consumer names it (return-type inference covers `lib.rs::run()`'s only usage).
+
+Four other findings were minor/informational and intentionally skipped:
+- `dump_embedded` returning `Result<PathBuf, String>` — resolved by the visibility tightening (internal API, prose-string return is fine when crate-internal).
+- `list_available` allocates two HashSets per call — not a hot path; reviewer themselves said skip.
+- `loader.rs` is now 820 lines covering parse/load/list/dump — defensible at this size; refactor only when another concern arrives.
+- `dump_embedded` write is not atomic (TOCTOU between exists-check and write) — interactive single-user invocation; revisit if dumping ever becomes non-interactive.
+
+214 lib tests still passing after the change.
+
 ## Final whole-Phase-A review
 
 Ran a single subagent over the full diff `a19ac65..b27f4e1` to catch cross-cutting issues per-task reviews could miss. Verdict: approved with four small fixes, all landed in commit `9e6e346`:
