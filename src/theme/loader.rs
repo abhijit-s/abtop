@@ -205,6 +205,69 @@ fn try_user_file(config_root: &Path, name: &str) -> Option<Theme> {
     Some(parse_theme_body(&body, name))
 }
 
+/// List all themes available for selection: the embedded BUILTIN entries
+/// plus user files under `<config_root>/abtop/themes/`. Embedded entries
+/// are listed in BUILTIN order. User-only entries are appended alphabetically.
+///
+/// Filesystem errors (missing dir, permission denied, etc.) are treated as
+/// "no user themes" — the embedded list is unconditionally returned.
+pub fn list_available(config_root: &Path) -> Vec<ThemeListing> {
+    let themes_dir = config_root.join("abtop").join("themes");
+    let mut user_names: Vec<String> = match std::fs::read_dir(&themes_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let path = e.path();
+                let file_name = path.file_name()?.to_str()?.to_owned();
+                if file_name.starts_with('.') {
+                    return None;
+                }
+                let stem = file_name.strip_suffix(".theme")?;
+                if stem.is_empty() {
+                    return None;
+                }
+                Some(stem.to_owned())
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    user_names.sort();
+
+    let user_set: std::collections::HashSet<&str> =
+        user_names.iter().map(|s| s.as_str()).collect();
+    let builtin_set: std::collections::HashSet<&str> = crate::theme::embedded::BUILTIN
+        .iter()
+        .map(|(n, _)| *n)
+        .collect();
+
+    let mut out: Vec<ThemeListing> = Vec::new();
+
+    // 1. Builtins in declaration order, promoted to UserOverride if shadowed.
+    for (name, _) in crate::theme::embedded::BUILTIN.iter() {
+        let source = if user_set.contains(name) {
+            Source::UserOverride
+        } else {
+            Source::Builtin
+        };
+        out.push(ThemeListing {
+            name: (*name).to_string(),
+            source,
+        });
+    }
+
+    // 2. User-only names (those not in BUILTIN), already alphabetically sorted.
+    for name in &user_names {
+        if !builtin_set.contains(name.as_str()) {
+            out.push(ThemeListing {
+                name: name.clone(),
+                source: Source::User,
+            });
+        }
+    }
+
+    out
+}
+
 /// Resolve a theme by name, consulting (1) the user themes dir under
 /// `config_root`, then (2) the embedded BUILTIN table. Returns None if
 /// neither contains the name.
@@ -550,5 +613,79 @@ theme[cached_grad_end]="#616263"
         assert_ne!(Source::Builtin, Source::User);
         assert_ne!(Source::Builtin, Source::UserOverride);
         assert_ne!(Source::User, Source::UserOverride);
+    }
+
+    #[test]
+    fn list_available_empty_user_dir_returns_only_builtin() {
+        let tmp = TempDir::new().unwrap();
+        let listings = list_available(tmp.path());
+
+        assert_eq!(listings.len(), 13);
+        for (i, (name, _)) in crate::theme::embedded::BUILTIN.iter().enumerate() {
+            assert_eq!(listings[i].name, *name);
+            assert_eq!(listings[i].source, Source::Builtin);
+        }
+    }
+
+    #[test]
+    fn list_available_user_only_themes_appended_alphabetically() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        write_theme_file(&themes_dir, "zorak", r##"theme[main_fg]="#ff0000""##);
+        write_theme_file(&themes_dir, "my-cool", r##"theme[main_fg]="#00ff00""##);
+
+        let listings = list_available(tmp.path());
+
+        assert_eq!(listings.len(), 15);
+        assert_eq!(listings[13].name, "my-cool");
+        assert_eq!(listings[13].source, Source::User);
+        assert_eq!(listings[14].name, "zorak");
+        assert_eq!(listings[14].source, Source::User);
+    }
+
+    #[test]
+    fn list_available_user_override_promotes_builtin_entry() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        write_theme_file(&themes_dir, "catppuccin", r##"theme[main_fg]="#abcdef""##);
+
+        let listings = list_available(tmp.path());
+
+        assert_eq!(listings.len(), 13);
+        let catppuccin = listings
+            .iter()
+            .find(|l| l.name == "catppuccin")
+            .expect("catppuccin present");
+        assert_eq!(catppuccin.source, Source::UserOverride);
+        let pos = listings.iter().position(|l| l.name == "catppuccin").unwrap();
+        let builtin_pos = crate::theme::embedded::BUILTIN
+            .iter()
+            .position(|(n, _)| *n == "catppuccin")
+            .unwrap();
+        assert_eq!(pos, builtin_pos);
+    }
+
+    #[test]
+    fn list_available_skips_hidden_and_non_theme_files() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(themes_dir.join(".catppuccin.theme.swp"), "junk").unwrap();
+        std::fs::write(themes_dir.join("notes.md"), "junk").unwrap();
+        std::fs::write(themes_dir.join("README"), "junk").unwrap();
+
+        let listings = list_available(tmp.path());
+
+        assert_eq!(listings.len(), 13);
+        assert!(listings.iter().all(|l| l.source == Source::Builtin));
+    }
+
+    #[test]
+    fn list_available_returns_builtin_when_user_dir_unreadable() {
+        let tmp = TempDir::new().unwrap();
+        let bogus = tmp.path().join("does-not-exist");
+        let listings = list_available(&bogus);
+        assert_eq!(listings.len(), 13);
+        assert!(listings.iter().all(|l| l.source == Source::Builtin));
     }
 }
