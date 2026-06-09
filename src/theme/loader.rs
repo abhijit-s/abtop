@@ -425,14 +425,16 @@ pub fn dump_embedded(
     Ok(target)
 }
 
-/// Load a theme directly from a filesystem path. Returns the parsed Theme
-/// with `name` derived from `path.file_stem()`. Errors propagate as
-/// String messages for CLI display.
+/// Load a theme directly from a filesystem path, returning the parsed Theme
+/// and any parse errors encountered. Name is derived from `path.file_stem()`.
+/// I/O errors (file not found, unreadable, etc.) propagate as Err(String).
 ///
 /// Use case: `--theme /tmp/scratch.theme` and similar one-shot iteration.
 /// The caller is responsible for skipping `save_theme` — this function
 /// only loads, it doesn't persist.
-pub(crate) fn load_from_path(path: &Path) -> Result<Theme, String> {
+pub(crate) fn load_from_path_with_errors(
+    path: &Path,
+) -> Result<(Theme, Vec<ParseError>), String> {
     let body = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let name = path
@@ -440,7 +442,13 @@ pub(crate) fn load_from_path(path: &Path) -> Result<Theme, String> {
         .and_then(|s| s.to_str())
         .unwrap_or("custom")
         .to_string();
-    Ok(parse_theme_body(&body, &name))
+    Ok(parse_theme_body_with_errors(&body, &name))
+}
+
+/// Thin wrapper that discards parse errors. Existing callers that don't
+/// care about errors keep working unchanged.
+pub(crate) fn load_from_path(path: &Path) -> Result<Theme, String> {
+    load_from_path_with_errors(path).map(|(t, _)| t)
 }
 
 /// Resolve a theme by name, consulting (1) the user themes dir under
@@ -483,12 +491,24 @@ pub fn load_chain(config_root: &Path, name: &str) -> Theme {
     })
 }
 
-/// Public entry point used by startup. Resolves the name against the
-/// current XDG config root and applies config-level overrides.
-pub fn load_or_default(name: &str, cfg: &AppConfig) -> Theme {
-    let mut theme = load_chain(&crate::config::xdg_config_dir(), name);
+/// Resolve a theme by name against the current XDG config root, with a
+/// last-resort fallback to embedded `btop`, and return any parse errors
+/// encountered. Config-level overrides are applied before returning.
+/// Always returns a Theme.
+pub(crate) fn load_or_default_with_errors(
+    name: &str,
+    cfg: &AppConfig,
+) -> (Theme, Vec<ParseError>) {
+    let (mut theme, errors) =
+        lookup_chain_with_errors(&crate::config::xdg_config_dir(), name);
     apply_overrides(&mut theme, cfg);
-    theme
+    (theme, errors)
+}
+
+/// Thin wrapper that discards parse errors. Existing callers that don't
+/// care about errors keep working unchanged.
+pub fn load_or_default(name: &str, cfg: &AppConfig) -> Theme {
+    load_or_default_with_errors(name, cfg).0
 }
 
 #[cfg(test)]
@@ -1206,5 +1226,43 @@ theme[cached_grad_end]="#616263"
         let (theme, errors) = lookup_chain_with_errors(tmp.path(), "nonexistent-name");
         assert_eq!(theme.name, "btop");
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn load_from_path_with_errors_returns_parse_errors() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("broken.theme");
+        std::fs::write(&path, r##"theme[main_bg]="#XYZ""##).unwrap();
+        let (theme, errors) = load_from_path_with_errors(&path)
+            .expect("file exists, so Ok");
+        assert_eq!(theme.name, "broken");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+    }
+
+    #[test]
+    fn load_from_path_with_errors_propagates_io_error() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("does-not-exist.theme");
+        let result = load_from_path_with_errors(&path);
+        let err = result.expect_err("missing file should be Err");
+        assert!(err.contains("failed to read"));
+    }
+
+    #[test]
+    fn load_or_default_with_errors_returns_embedded_theme_with_no_errors() {
+        // Sanity: a known-clean embedded name produces zero errors via the
+        // load_or_default_with_errors entry point.
+        let cfg = crate::config::AppConfig::default();
+        let (theme, errors) = load_or_default_with_errors("catppuccin", &cfg);
+        // The theme name is "catppuccin" unless the user has a broken override
+        // file on this machine, in which case errors may be non-empty. The
+        // assertion is permissive on the developer machine; the unit-level
+        // contract (errors propagate when present) is covered by the
+        // lookup_chain_with_errors tests in Task 4.
+        assert_eq!(theme.name, "catppuccin");
+        // No hard assertion on errors.len() since the test environment may
+        // contain a user override. The Task 4 tests cover the strict cases.
+        let _ = errors;
     }
 }
