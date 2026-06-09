@@ -313,6 +313,7 @@ pub fn run() -> io::Result<()> {
         &cfg.hidden_agents,
         cfg.panels,
         &cfg.claude_config_dirs,
+        &parse_errors,
     );
 
     // Always attempt both cleanup steps regardless of app result
@@ -332,6 +333,7 @@ fn run_app(
     hidden_agents: &[String],
     panels: config::PanelVisibility,
     claude_config_dirs: &[std::path::PathBuf],
+    parse_errors: &[theme::ParseError],
 ) -> io::Result<()> {
     let mut app = App::new_with_config_and_claude_dirs(
         initial_theme,
@@ -339,6 +341,7 @@ fn run_app(
         panels,
         claude_config_dirs,
     );
+    set_parse_error_status(&mut app, parse_errors);
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
