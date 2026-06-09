@@ -283,11 +283,10 @@ pub struct ThemeListing {
     pub source: Source,
 }
 
-/// Try to read and parse `<config_root>/abtop/themes/<name>.theme`.
-/// Returns Some(theme) on a successful read+parse; None if the file is
-/// missing or unreadable. Rejects names containing path separators or `..`
-/// so a CLI/config theme name can't escape the themes directory.
-fn try_user_file(config_root: &Path, name: &str) -> Option<Theme> {
+/// Read the user-dir file's body, applying the same path-traversal guard
+/// as the existing `try_user_file` helper. Returns None if the name is
+/// disallowed or the file isn't readable.
+fn try_user_file_body(config_root: &Path, name: &str) -> Option<String> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return None;
     }
@@ -295,8 +294,15 @@ fn try_user_file(config_root: &Path, name: &str) -> Option<Theme> {
         .join("abtop")
         .join("themes")
         .join(format!("{name}.theme"));
-    let body = std::fs::read_to_string(&path).ok()?;
-    Some(parse_theme_body(&body, name))
+    std::fs::read_to_string(&path).ok()
+}
+
+/// Try to read and parse `<config_root>/abtop/themes/<name>.theme`.
+/// Returns Some(theme) on a successful read+parse; None if the file is
+/// missing or unreadable. Rejects names containing path separators or `..`
+/// so a CLI/config theme name can't escape the themes directory.
+fn try_user_file(config_root: &Path, name: &str) -> Option<Theme> {
+    try_user_file_body(config_root, name).map(|body| parse_theme_body(&body, name))
 }
 
 /// List all themes available for selection: the embedded BUILTIN entries
@@ -445,6 +451,24 @@ pub fn lookup_chain(config_root: &Path, name: &str) -> Option<Theme> {
         return Some(t);
     }
     crate::theme::embedded::lookup(name).map(|body| parse_theme_body(body, name))
+}
+
+/// Like `lookup_chain` but also returns any parse errors encountered.
+/// Resolution order: user file → embedded → embedded btop (last resort).
+/// Always returns a Theme.
+pub(crate) fn lookup_chain_with_errors(
+    config_root: &Path,
+    name: &str,
+) -> (Theme, Vec<ParseError>) {
+    if let Some(body) = try_user_file_body(config_root, name) {
+        return parse_theme_body_with_errors(&body, name);
+    }
+    if let Some(body) = crate::theme::embedded::lookup(name) {
+        return parse_theme_body_with_errors(body, name);
+    }
+    let body = crate::theme::embedded::lookup("btop")
+        .expect("embedded btop is a build-time invariant");
+    (parse_theme_body(body, "btop"), Vec::new())
 }
 
 /// Resolve a theme with a last-resort fallback to embedded `btop`. Always
@@ -1154,5 +1178,33 @@ theme[cached_grad_end]="#616263"
         // main_bg falls back to btop default since the bad hex was ignored.
         use ratatui::style::Color;
         assert_eq!(t.main_bg, Color::Rgb(0x19, 0x19, 0x19));
+    }
+
+    #[test]
+    fn lookup_chain_with_errors_returns_user_file_errors() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        write_theme_file(&themes_dir, "broken", r##"theme[main_bg]="#XYZ""##);
+
+        let (theme, errors) = lookup_chain_with_errors(tmp.path(), "broken");
+        assert_eq!(theme.name, "broken");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+    }
+
+    #[test]
+    fn lookup_chain_with_errors_returns_no_errors_for_embedded() {
+        let tmp = TempDir::new().unwrap();
+        let (theme, errors) = lookup_chain_with_errors(tmp.path(), "catppuccin");
+        assert_eq!(theme.name, "catppuccin");
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn lookup_chain_with_errors_falls_back_to_btop_with_no_errors() {
+        let tmp = TempDir::new().unwrap();
+        let (theme, errors) = lookup_chain_with_errors(tmp.path(), "nonexistent-name");
+        assert_eq!(theme.name, "btop");
+        assert!(errors.is_empty());
     }
 }
