@@ -27,6 +27,9 @@ impl Default for PanelVisibility {
 
 pub struct AppConfig {
     pub theme: String,
+    /// When false, overrides the active theme's main_bg with Color::Reset
+    /// so the terminal's own background (including transparency) shows through.
+    pub theme_background: bool,
     /// Agent CLI names to exclude from the TUI (e.g. ["codex"] to hide Codex).
     /// Matched case-insensitively against each collector's agent_cli identifier.
     pub hidden_agents: Vec<String>,
@@ -43,6 +46,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             theme: "btop".to_string(),
+            theme_background: true,
             hidden_agents: Vec::new(),
             claude_config_dirs: Vec::new(),
             panels: PanelVisibility::default(),
@@ -116,6 +120,9 @@ fn parse_config_body(content: &str) -> AppConfig {
             match key {
                 "theme" => config.theme = val.to_string(),
                 "language" => config.language = val.to_string(),
+                "theme_background" => {
+                    config.theme_background = parse_bool(val).unwrap_or(true);
+                }
                 "show_context" => config.panels.context = parse_bool(val).unwrap_or(true),
                 "show_quota" => config.panels.quota = parse_bool(val).unwrap_or(true),
                 "show_tokens" => config.panels.tokens = parse_bool(val).unwrap_or(true),
@@ -381,5 +388,35 @@ mod tests {
         let path = config_path().expect("config_path should resolve");
         let expected = xdg_config_dir().join("abtop").join("config.toml");
         assert_eq!(path, expected);
+    }
+
+    #[test]
+    fn theme_background_defaults_to_true() {
+        let cfg = AppConfig::default();
+        assert!(cfg.theme_background);
+    }
+
+    #[test]
+    fn parse_config_body_reads_theme_background_false() {
+        let cfg = parse_config_body("theme_background = false\n");
+        assert!(!cfg.theme_background);
+    }
+
+    #[test]
+    fn parse_config_body_reads_theme_background_true_explicit() {
+        let cfg = parse_config_body("theme_background = true\n");
+        assert!(cfg.theme_background);
+    }
+
+    #[test]
+    fn parse_config_body_keeps_default_when_theme_background_missing() {
+        let cfg = parse_config_body("theme = \"btop\"\n");
+        assert!(cfg.theme_background);
+    }
+
+    #[test]
+    fn parse_config_body_keeps_default_when_theme_background_garbage() {
+        let cfg = parse_config_body("theme_background = maybe\n");
+        assert!(cfg.theme_background);
     }
 }
