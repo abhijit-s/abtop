@@ -1,13 +1,17 @@
-# abtop Phase A — Theme files & transparency: tracking
+# abtop theming work: tracking
 
-Resume pointer for the work specified in
-[`specs/2026-06-09-theme-files-and-transparency-design.md`](specs/2026-06-09-theme-files-and-transparency-design.md)
-and planned in
-[`plans/2026-06-09-theme-files-and-transparency.md`](plans/2026-06-09-theme-files-and-transparency.md).
+Resume pointer for theming + transparency work on the local abtop fork.
 
-## Status: Phase A complete + catppuccin-transparent variant added
+## Status: Phase A done + catppuccin-transparent variant + Phase B1 done
 
 Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
+
+### Phases shipped
+
+| Phase | Spec | Plan | Outcome |
+|---|---|---|---|
+| A — theme files + transparency | [`specs/2026-06-09-theme-files-and-transparency-design.md`](specs/2026-06-09-theme-files-and-transparency-design.md) | [`plans/2026-06-09-theme-files-and-transparency.md`](plans/2026-06-09-theme-files-and-transparency.md) | 14 tasks + catppuccin-transparent variant; lib tests 0 → 203 |
+| B1 — `--list-themes` / `--dump-theme` | [`specs/2026-06-09-list-and-dump-theme-design.md`](specs/2026-06-09-list-and-dump-theme-design.md) | [`plans/2026-06-09-list-and-dump-theme.md`](plans/2026-06-09-list-and-dump-theme.md) | 8 tasks; lib tests 203 → 214 |
 
 13 embedded themes now ship: the original 12 plus `catppuccin-transparent` (catppuccin with `main_bg=""`), added post-Phase A as a baked-in convenience variant. Available via `--theme catppuccin-transparent` or `theme = "catppuccin-transparent"` in config.toml, without needing the `theme_background = false` flag.
 
@@ -32,9 +36,23 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 | 14 | Build release and install to `~/.local/libexec/abtop` | done | (no commit — install side effect) |
 | 15 | Add `catppuccin-transparent` embedded variant (post-Phase A) | done | `13a13a5` |
 
+### Phase B1 progress (8 tasks)
+
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 1 | `Source` enum + `ThemeListing` struct in `loader.rs` | done | `018ecc1` |
+| 2 | `list_available()` function | done | `e7d6775` |
+| 3 | `dump_embedded()` function | done | `4d7ed05` |
+| 4 | Re-export new symbols from `theme/mod.rs` | done | `336b35b` |
+| 5 | `--list-themes` early-return handler in `lib.rs` | done | `11a28d7` |
+| 6 | `--dump-theme [--force]` early-return handler | done | `a084325` |
+| 7 | README docs ("Discovering and editing themes" subsection) | done | `a67e7f2` |
+| 8 | Build + install + smoke | done | (no commit — install side effect) |
+
 ## Acceptance criteria (verified)
 
-- ✅ `cargo test --lib` is green (202 tests).
+### Phase A
+- ✅ `cargo test --lib` is green (202 tests; now 214 after B1).
 - ✅ `cargo build --release` produces a working binary.
 - ✅ `abtop --once` runs without panicking.
 - ✅ Four smoke tests pass:
@@ -44,18 +62,29 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
   - `--theme catppuccin-transparent` resolves the embedded variant.
 - ✅ Binary installed at `~/.local/libexec/abtop` (on PATH via env-osx.zsh).
 
+### Phase B1
+- ✅ `cargo test --lib` is green (214 tests; was 203 at B1 start, +11 new).
+- ✅ `abtop --list-themes` prints 13 lines all `(built-in)` with no user-dir themes; shows `(user override)` / `(user)` as appropriate.
+- ✅ `abtop --dump-theme catppuccin` writes the embedded body to `~/.config/abtop/themes/catppuccin.theme`.
+- ✅ Re-run without `--force` errors with exit 1 and the expected stderr message.
+- ✅ `--force` overwrites cleanly with exit 0.
+- ✅ `--dump-theme nonexistent` errors with exit 1 and lists available embedded themes.
+- ✅ `--dump-theme ../evil` rejected before any filesystem touch; exit 1.
+- ✅ After cleanup of the dumped file, `--list-themes` reverts the entry from `(user override)` to `(built-in)`.
+
 ## Visual confirmation pending
 
 The end-to-end transparency check requires running the interactive TUI in a terminal that has transparency configured. The CLI smoke tests don't exercise that visual path. Run `abtop` in a transparent-bg terminal (Alacritty / Ghostty / iTerm2 with transparency on) to confirm the catppuccin background shows through.
 
-## Phase B (deferred — separate spec)
+## Phase B remaining items (deferred — separate spec each)
 
-- `t`-cycle merges user-dir themes with embedded set.
-- Banner in UI on malformed theme file.
-- `abtop --theme <absolute-path>`.
-- `abtop --list-themes`, `abtop --dump-theme <name>`.
-- Reload-on-file-change.
-- macOS `~/Library/Application Support/abtop/config.toml` → XDG migration.
+B1 (`--list-themes` / `--dump-theme`) shipped. Still open:
+
+- B2: `t`-cycle merges user-dir themes with embedded set.
+- B3: `abtop --theme <absolute-path>`.
+- B4: Banner in UI on malformed theme file.
+- B5: Reload-on-file-change.
+- B6: macOS `~/Library/Application Support/abtop/config.toml` → XDG migration (skip unless we ever share this fork).
 
 ## Final whole-Phase-A review
 
