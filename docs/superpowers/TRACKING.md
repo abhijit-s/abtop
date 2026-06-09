@@ -12,7 +12,7 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 |---|---|---|---|
 | A — theme files + transparency | [`specs/2026-06-09-theme-files-and-transparency-design.md`](specs/2026-06-09-theme-files-and-transparency-design.md) | [`plans/2026-06-09-theme-files-and-transparency.md`](plans/2026-06-09-theme-files-and-transparency.md) | 14 tasks + catppuccin-transparent variant; lib tests 0 → 203 |
 | B1 — `--list-themes` / `--dump-theme` | [`specs/2026-06-09-list-and-dump-theme-design.md`](specs/2026-06-09-list-and-dump-theme-design.md) | [`plans/2026-06-09-list-and-dump-theme.md`](plans/2026-06-09-list-and-dump-theme.md) | 8 tasks; lib tests 203 → 214 |
-| B2 — t-cycle picks up user themes | [`specs/2026-06-09-t-cycle-user-themes-design.md`](specs/2026-06-09-t-cycle-user-themes-design.md) | [`plans/2026-06-09-t-cycle-user-themes.md`](plans/2026-06-09-t-cycle-user-themes.md) | 3 tasks; lib tests 214 → 216 |
+| B2 — t-cycle picks up user themes | [`specs/2026-06-09-t-cycle-user-themes-design.md`](specs/2026-06-09-t-cycle-user-themes-design.md) | [`plans/2026-06-09-t-cycle-user-themes.md`](plans/2026-06-09-t-cycle-user-themes.md) | 3 tasks + review fix; lib tests 214 → 217 |
 
 13 embedded themes now ship: the original 12 plus `catppuccin-transparent` (catppuccin with `main_bg=""`), added post-Phase A as a baked-in convenience variant. Available via `--theme catppuccin-transparent` or `theme = "catppuccin-transparent"` in config.toml, without needing the `theme_background = false` flag.
 
