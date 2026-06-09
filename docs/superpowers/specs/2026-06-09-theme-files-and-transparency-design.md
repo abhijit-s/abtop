@@ -85,7 +85,7 @@ theme[<key>]="<value>"
 
 **Missing keys**: filled in from the embedded `"btop"` theme. A partial theme file therefore works (users can author a "just override these 3 colors" file).
 
-### Full key list (39)
+### Full key list (33)
 
 Base (12): `main_bg`, `main_fg`, `title`, `hi_fg`, `selected_bg`, `selected_fg`, `inactive_fg`, `graph_text`, `meter_bg`, `proc_misc`, `div_line`, `session_id`.
 
