@@ -57,6 +57,15 @@ The end-to-end transparency check requires running the interactive TUI in a term
 - Reload-on-file-change.
 - macOS `~/Library/Application Support/abtop/config.toml` → XDG migration.
 
-## Minor known issues (non-blocking)
+## Final whole-Phase-A review
 
-- Spec text section "Theme file format" says "39 keys total (24 + 15)"; the actual key count is 33 (12 base + 2 semantic + 4 box-border + 15 gradient channels). Implementation matches reality at 33; the prose drift is in the spec doc only.
+Ran a single subagent over the full diff `a19ac65..b27f4e1` to catch cross-cutting issues per-task reviews could miss. Verdict: approved with four small fixes, all landed in commit `9e6e346`:
+
+1. `parse_theme_body` dropped from public re-export — kept the crate API to `apply_overrides` + `load_or_default` only (avoids implicit semver commitment on the parser).
+2. Path-traversal guard added to `try_user_file` — `--theme '../../etc/passwd'` and friends now silently return `None`. New test `lookup_chain_rejects_path_traversal_names` covers `..`, `/`, `\`, and empty.
+3. README bumped from "12 themes" to "13 themes" in both spots and `catppuccin-transparent` added to the list with a one-liner on what it is.
+4. README clarifies that empty gradient channels fall back to btop (no `Color::Reset` for tuples).
+
+203 lib tests passing after the change (was 202 + the new traversal test).
+
+Spec doc cleanup (`b27f4e1`): "39 keys" prose corrected to "33 keys (12+2+4+15)" so it matches the implementation. Was the one known non-blocking drift; now resolved.
