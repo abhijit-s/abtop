@@ -76,6 +76,32 @@ use ratatui::prelude::*;
 use std::io::{self, stdout};
 use std::time::Duration;
 
+/// Decide whether `--theme <arg>` should be treated as a path. Returns
+/// true if the arg contains a path separator (`/` or `\`) or starts with
+/// `~` (home-relative). Otherwise the arg is a theme name and resolves
+/// through the basename lookup chain.
+fn is_theme_path_arg(arg: &str) -> bool {
+    arg.contains('/') || arg.contains('\\') || arg.starts_with('~')
+}
+
+/// Expand a leading `~/` (or bare `~`) to the user's home directory.
+/// Returns the input unchanged if expansion isn't possible or the path
+/// doesn't start with `~`. Does NOT support `~someuser/path` —
+/// that arg passes through.
+fn expand_tilde(arg: &str) -> std::path::PathBuf {
+    if let Some(rest) = arg.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    if arg == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    std::path::PathBuf::from(arg)
+}
+
 /// Construct a headless `App` from loaded config + theme. Shared by the
 /// `--json` and `--once` entry points.
 fn build_app(theme: theme::Theme, cfg: &config::AppConfig) -> App {
@@ -598,5 +624,50 @@ fn fmt_tok(n: u64) -> String {
         format!("{:.1}k", n as f64 / 1_000.0)
     } else {
         format!("{}", n)
+    }
+}
+
+#[cfg(test)]
+mod theme_arg_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn is_theme_path_arg_detects_separators() {
+        // Bare names are not paths.
+        assert!(!is_theme_path_arg("catppuccin"));
+        assert!(!is_theme_path_arg("my-theme"));
+        assert!(!is_theme_path_arg("scratch.theme"));
+        assert!(!is_theme_path_arg(""));
+
+        // Path-shaped args.
+        assert!(is_theme_path_arg("/tmp/x.theme"));
+        assert!(is_theme_path_arg("./scratch.theme"));
+        assert!(is_theme_path_arg("../up.theme"));
+        assert!(is_theme_path_arg("~/foo.theme"));
+        assert!(is_theme_path_arg("~"));
+        assert!(is_theme_path_arg("C:\\Users\\me\\x.theme"));
+        assert!(is_theme_path_arg("dir/file.theme"));
+    }
+
+    #[test]
+    fn expand_tilde_expands_home_relative_paths() {
+        let home = dirs::home_dir().expect("home_dir for this test platform");
+        assert_eq!(expand_tilde("~/foo.theme"), home.join("foo.theme"));
+        assert_eq!(expand_tilde("~"), home);
+    }
+
+    #[test]
+    fn expand_tilde_passes_through_non_tilde_paths() {
+        assert_eq!(expand_tilde("/tmp/x.theme"), PathBuf::from("/tmp/x.theme"));
+        assert_eq!(expand_tilde("./rel"), PathBuf::from("./rel"));
+        assert_eq!(expand_tilde("relative"), PathBuf::from("relative"));
+    }
+
+    #[test]
+    fn expand_tilde_does_not_expand_user_relative_tilde() {
+        // ~root/path is a path with a tilde but NOT one we expand — we
+        // only handle bare ~ and ~/ prefixes. The arg passes through.
+        assert_eq!(expand_tilde("~root/path"), PathBuf::from("~root/path"));
     }
 }
