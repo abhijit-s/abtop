@@ -171,6 +171,24 @@ pub fn apply_overrides(theme: &mut Theme, cfg: &AppConfig) {
 
 use std::path::Path;
 
+/// Where a theme comes from when surfaced by `list_available`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// Shipped via `embedded::BUILTIN`; no user file shadows it.
+    Builtin,
+    /// User file at `$XDG_CONFIG_HOME/abtop/themes/<name>.theme`, name not in BUILTIN.
+    User,
+    /// User file shadows a BUILTIN entry with the same name.
+    UserOverride,
+}
+
+/// One entry in the output of `list_available`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeListing {
+    pub name: String,
+    pub source: Source,
+}
+
 /// Try to read and parse `<config_root>/abtop/themes/<name>.theme`.
 /// Returns Some(theme) on a successful read+parse; None if the file is
 /// missing or unreadable. Rejects names containing path separators or `..`
@@ -513,5 +531,24 @@ theme[cached_grad_end]="#616263"
         assert!(lookup_chain(tmp.path(), "sub/name").is_none());
         assert!(lookup_chain(tmp.path(), "name\\with\\backslash").is_none());
         assert!(lookup_chain(tmp.path(), "").is_none());
+    }
+
+    #[test]
+    fn theme_listing_basics() {
+        let l = ThemeListing { name: "btop".to_string(), source: Source::Builtin };
+        assert_eq!(l.name, "btop");
+        assert_eq!(l.source, Source::Builtin);
+
+        // Equality and Clone work for use in test assertions.
+        let l2 = l.clone();
+        assert_eq!(l, l2);
+
+        // Debug formats without panicking.
+        let _ = format!("{l:?}");
+
+        // Three variants are distinct.
+        assert_ne!(Source::Builtin, Source::User);
+        assert_ne!(Source::Builtin, Source::UserOverride);
+        assert_ne!(Source::User, Source::UserOverride);
     }
 }
