@@ -14,6 +14,7 @@ pub const THEME_NAMES: &[&str] = &[
     "btop",
     "dracula",
     "catppuccin",
+    "catppuccin-transparent",
     "tokyo-night",
     "gruvbox",
     "nord",

@@ -4,6 +4,7 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("btop",          include_str!("../../themes/btop.theme")),
     ("dracula",       include_str!("../../themes/dracula.theme")),
     ("catppuccin",    include_str!("../../themes/catppuccin.theme")),
+    ("catppuccin-transparent", include_str!("../../themes/catppuccin-transparent.theme")),
     ("tokyo-night",   include_str!("../../themes/tokyo-night.theme")),
     ("gruvbox",       include_str!("../../themes/gruvbox.theme")),
     ("nord",          include_str!("../../themes/nord.theme")),
