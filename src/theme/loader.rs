@@ -314,17 +314,50 @@ theme[cached_grad_end]="#616263"
     }
 
     #[test]
-    fn embedded_btop_matches_rust_constructor() {
-        let body = crate::theme::embedded::lookup("btop")
-            .expect("btop must be in BUILTIN");
-        let parsed = parse_theme_body(body, "btop");
-        let from_rust = Theme::btop();
-        assert_eq!(parsed, from_rust, "embedded btop.theme drifted from Theme::btop()");
+    fn every_embedded_theme_matches_its_rust_constructor() {
+        let pairs: &[(&str, fn() -> Theme)] = &[
+            ("btop",          Theme::btop),
+            ("dracula",       Theme::dracula),
+            ("catppuccin",    Theme::catppuccin),
+            ("tokyo-night",   Theme::tokyo_night),
+            ("gruvbox",       Theme::gruvbox),
+            ("nord",          Theme::nord),
+            ("light",         Theme::light),
+            ("white",         Theme::white),
+            ("high-contrast", Theme::high_contrast),
+            ("protanopia",    Theme::protanopia),
+            ("deuteranopia",  Theme::deuteranopia),
+            ("tritanopia",    Theme::tritanopia),
+        ];
+        let mut failures: Vec<String> = Vec::new();
+        for (name, ctor) in pairs {
+            let body = crate::theme::embedded::lookup(name)
+                .unwrap_or_else(|| panic!("'{name}' missing from BUILTIN"));
+            let parsed = parse_theme_body(body, name);
+            let from_rust = ctor();
+            if parsed != from_rust {
+                failures.push(format!(
+                    "  '{name}' drift:\n    parsed: {:?}\n    rust:   {:?}",
+                    parsed, from_rust
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "embedded themes drifted from Rust constructors:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn theme_names_const_matches_embedded_in_order() {
+        let embedded: Vec<&str> = crate::theme::embedded::BUILTIN.iter().map(|(n, _)| *n).collect();
+        let listed: Vec<&str> = crate::theme::THEME_NAMES.to_vec();
+        assert_eq!(embedded, listed, "THEME_NAMES drifted from embedded::BUILTIN");
     }
 
     #[test]
     fn theme_names_const_includes_all_embedded() {
-        // Relaxed for Task 8 (only btop is embedded); Task 9 tightens this.
         let embedded_set: std::collections::HashSet<&str> =
             crate::theme::embedded::BUILTIN.iter().map(|(n, _)| *n).collect();
         for name in embedded_set {
