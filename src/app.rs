@@ -83,6 +83,19 @@ impl NarrowSection {
     }
 }
 
+/// Where the active theme came from on disk. Used by `App::tick` to
+/// detect mid-session edits and reload. `None` for embedded themes
+/// (no source file to watch).
+#[derive(Clone, Debug)]
+pub(crate) struct ThemeSource {
+    /// Absolute path to the `.theme` file.
+    pub path: std::path::PathBuf,
+    /// Modification time at the last successful read; `None` means the
+    /// file was missing at the last check, so a returned-to-existence
+    /// path with any mtime triggers a fresh reload.
+    pub mtime: Option<std::time::SystemTime>,
+}
+
 pub struct App {
     pub sessions: Vec<AgentSession>,
     pub selected: usize,
@@ -154,6 +167,9 @@ pub struct App {
     /// tests and any code path that constructs `App` without calling
     /// `set_cycle_names`).
     cycle_names: Vec<String>,
+    /// Source of the active theme on disk, or None for embedded.
+    /// Polled in `App::tick` for mid-session reload (B5).
+    theme_source: Option<ThemeSource>,
 }
 
 impl App {
@@ -221,6 +237,7 @@ impl App {
             help_open: false,
             view_open: false,
             cycle_names: Vec::new(),
+            theme_source: None,
         }
     }
 
@@ -515,6 +532,14 @@ impl App {
     /// in `cycle_theme`.
     pub(crate) fn set_cycle_names(&mut self, names: Vec<String>) {
         self.cycle_names = names;
+    }
+
+    /// Set the source file watched by `App::tick` for mid-session reload.
+    /// Called by `build_app` at startup with the resolved theme's path
+    /// + initial mtime. `None` disables polling (used for embedded-only
+    /// themes that have no file backing).
+    pub(crate) fn set_theme_source(&mut self, source: Option<ThemeSource>) {
+        self.theme_source = source;
     }
 
     /// Set a transient status message that auto-clears after 3 seconds.
@@ -1270,5 +1295,27 @@ mod cycle_theme_tests {
         assert_eq!(app.theme.name, "dracula");
         app.cycle_theme();
         assert_eq!(app.theme.name, "btop");
+    }
+}
+
+#[cfg(test)]
+mod theme_source_tests {
+    use super::*;
+    use crate::config::PanelVisibility;
+    use std::path::PathBuf;
+
+    #[test]
+    fn set_theme_source_round_trip() {
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        let src = ThemeSource {
+            path: PathBuf::from("/tmp/x.theme"),
+            mtime: None,
+        };
+        app.set_theme_source(Some(src.clone()));
+        app.set_theme_source(None);
     }
 }
