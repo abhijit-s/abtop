@@ -105,6 +105,20 @@ pub fn run() -> io::Result<()> {
         return Ok(());
     }
 
+    // --list-themes flag: print available themes and exit
+    if std::env::args().any(|a| a == "--list-themes") {
+        let listings = theme::list_available(&config::xdg_config_dir());
+        for l in listings {
+            let source_str = match l.source {
+                theme::Source::Builtin => "built-in",
+                theme::Source::User => "user",
+                theme::Source::UserOverride => "user override",
+            };
+            println!("{} ({})", l.name, source_str);
+        }
+        return Ok(());
+    }
+
     // Load config once; it drives both the default theme and the hidden-agents list.
     let cfg = config::load_config();
 
