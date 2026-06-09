@@ -67,6 +67,9 @@ fn xdg_config_dir_inner(xdg_env: Option<String>, home: Option<PathBuf>) -> PathB
     PathBuf::from(".")
 }
 
+/// XDG-style config root. Unlike `dirs::config_dir()`, this returns
+/// `~/.config` on macOS as well, so abtop's config tree lives at the
+/// same path on every platform.
 pub fn xdg_config_dir() -> PathBuf {
     xdg_config_dir_inner(std::env::var("XDG_CONFIG_HOME").ok(), dirs::home_dir())
 }
