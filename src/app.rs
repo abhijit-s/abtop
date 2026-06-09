@@ -148,6 +148,12 @@ pub struct App {
     pub help_open: bool,
     /// View leader overlay (`v`) visibility.
     pub view_open: bool,
+    /// Theme names the `t` key cycles through. Built once at startup
+    /// from `theme::list_available()` so user-dir themes appear in the
+    /// cycle. Empty → fall back to `crate::theme::THEME_NAMES` (used by
+    /// tests and any code path that constructs `App` without calling
+    /// `set_cycle_names`).
+    cycle_names: Vec<String>,
 }
 
 impl App {
@@ -214,6 +220,7 @@ impl App {
             agent_aggregate: AgentAggregate::default(),
             help_open: false,
             view_open: false,
+            cycle_names: Vec::new(),
         }
     }
 
@@ -471,21 +478,44 @@ impl App {
     }
 
     pub fn cycle_theme(&mut self) {
-        let names = crate::theme::THEME_NAMES;
-        let current = names
-            .iter()
-            .position(|&n| n == self.theme.name)
-            .unwrap_or(0);
-        let next = (current + 1) % names.len();
+        // Use the runtime cycle list when populated; fall back to the
+        // embedded const for tests / older construction paths.
+        let next_name: String = if self.cycle_names.is_empty() {
+            let names = crate::theme::THEME_NAMES;
+            let current = names
+                .iter()
+                .position(|&n| n == self.theme.name)
+                .unwrap_or(0);
+            let next = (current + 1) % names.len();
+            names[next].to_string()
+        } else {
+            let current = self
+                .cycle_names
+                .iter()
+                .position(|n| n == &self.theme.name)
+                .unwrap_or(0);
+            let next = (current + 1) % self.cycle_names.len();
+            self.cycle_names[next].clone()
+        };
         let cfg = crate::config::load_config();
-        let mut new_theme = Theme::by_name(names[next]).unwrap_or_default();
+        let mut new_theme = Theme::by_name(&next_name).unwrap_or_default();
         crate::theme::apply_overrides(&mut new_theme, &cfg);
         self.theme = new_theme;
-        if let Err(e) = crate::config::save_theme(names[next]) {
-            self.set_status(format!("theme: {} (save failed: {})", names[next], e));
+        if let Err(e) = crate::config::save_theme(&next_name) {
+            self.set_status(format!("theme: {} (save failed: {})", next_name, e));
         } else {
-            self.set_status(format!("theme: {}", names[next]));
+            self.set_status(format!("theme: {}", next_name));
         }
+    }
+
+    /// Set the list of theme names the `t` key cycles through. Called by
+    /// `build_app` at startup with the output of `theme::list_available()`
+    /// so user-dir themes appear in the cycle alongside embedded ones.
+    /// Empty input is accepted and triggers the `THEME_NAMES` fallback
+    /// in `cycle_theme`.
+    #[allow(dead_code)] // wired up by build_app in Phase B2 Task 2
+    pub(crate) fn set_cycle_names(&mut self, names: Vec<String>) {
+        self.cycle_names = names;
     }
 
     /// Set a transient status message that auto-clears after 3 seconds.
@@ -1203,5 +1233,43 @@ mod tests {
         assert!(!is_killable_agent_command(
             "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
         ));
+    }
+}
+
+#[cfg(test)]
+mod cycle_theme_tests {
+    use super::*;
+    use crate::config::PanelVisibility;
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn cycle_theme_falls_back_to_THEME_NAMES_when_cycle_names_empty() {
+        // App constructed without set_cycle_names: cycle_names is empty,
+        // so cycle_theme falls back to the embedded THEME_NAMES const.
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        // Theme::default() is btop (THEME_NAMES[0]); cycling moves to dracula (index 1).
+        assert_eq!(app.theme.name, "btop");
+        app.cycle_theme();
+        assert_eq!(app.theme.name, "dracula");
+    }
+
+    #[test]
+    fn cycle_theme_uses_app_cycle_names_when_set() {
+        // App with an explicit cycle list of just ["dracula", "btop"].
+        // Cycling from dracula must land on btop (the runtime list, not
+        // the embedded THEME_NAMES order which would go dracula -> catppuccin).
+        let mut app = App::new_with_config(
+            Theme::by_name("dracula").expect("dracula in BUILTIN"),
+            &[],
+            PanelVisibility::default(),
+        );
+        app.set_cycle_names(vec!["dracula".to_string(), "btop".to_string()]);
+        assert_eq!(app.theme.name, "dracula");
+        app.cycle_theme();
+        assert_eq!(app.theme.name, "btop");
     }
 }
