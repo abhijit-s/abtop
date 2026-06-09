@@ -119,6 +119,21 @@ fn build_app(theme: theme::Theme, cfg: &config::AppConfig) -> App {
     app
 }
 
+/// Attach a footer status message to the app if any parse errors landed
+/// during theme loading. Called from each entry point right after
+/// `build_app` returns. No-op when `errors` is empty.
+fn set_parse_error_status(app: &mut App, errors: &[theme::ParseError]) {
+    if errors.is_empty() {
+        return;
+    }
+    let theme_name = app.theme.name.clone();
+    let count = errors.len();
+    let suffix = if count == 1 { "" } else { "s" };
+    app.set_status(format!(
+        "theme '{theme_name}' has {count} parse error{suffix}"
+    ));
+}
+
 pub fn run() -> io::Result<()> {
     // --version / -V flag: print version and exit
     if std::env::args().any(|a| a == "--version" || a == "-V") {
@@ -201,38 +216,39 @@ pub fn run() -> io::Result<()> {
             }
         });
 
-    let initial_theme: theme::Theme = match &cli_theme_name {
-        Some(arg) if is_theme_path_arg(arg) => {
-            // Path mode: read the file directly, apply config overrides,
-            // do NOT save_theme (path themes are one-shot).
-            let path = expand_tilde(arg);
-            match theme::load_from_path(&path) {
-                Ok(mut t) => {
-                    theme::apply_overrides(&mut t, &cfg);
-                    t
+    let (initial_theme, parse_errors): (theme::Theme, Vec<theme::ParseError>) =
+        match &cli_theme_name {
+            Some(arg) if is_theme_path_arg(arg) => {
+                // Path mode: read the file directly, apply config overrides,
+                // do NOT save_theme (path themes are one-shot).
+                let path = expand_tilde(arg);
+                match theme::load_from_path_with_errors(&path) {
+                    Ok((mut t, errs)) => {
+                        theme::apply_overrides(&mut t, &cfg);
+                        (t, errs)
+                    }
+                    Err(msg) => {
+                        eprintln!("{msg}");
+                        std::process::exit(1);
+                    }
                 }
-                Err(msg) => {
-                    eprintln!("{msg}");
+            }
+            Some(name) => {
+                // Name mode: existing flow. Validate via by_name and hard-fail
+                // on miss, then load + apply_overrides happen inside
+                // load_or_default_with_errors itself.
+                if theme::Theme::by_name(name).is_none() {
+                    eprintln!(
+                        "unknown theme '{}'. available: {}",
+                        name,
+                        theme::THEME_NAMES.join(", ")
+                    );
                     std::process::exit(1);
                 }
+                theme::load_or_default_with_errors(name, &cfg)
             }
-        }
-        Some(name) => {
-            // Name mode: existing flow. Validate via by_name and hard-fail
-            // on miss, then load_or_default + apply_overrides happen inside
-            // load_or_default itself.
-            if theme::Theme::by_name(name).is_none() {
-                eprintln!(
-                    "unknown theme '{}'. available: {}",
-                    name,
-                    theme::THEME_NAMES.join(", ")
-                );
-                std::process::exit(1);
-            }
-            theme::load_or_default(name, &cfg)
-        }
-        None => theme::load_or_default(&cfg.theme, &cfg),
-    };
+            None => theme::load_or_default_with_errors(&cfg.theme, &cfg),
+        };
 
     let demo_mode = std::env::args().any(|a| a == "--demo");
     let exit_on_jump = std::env::args().any(|a| a == "--exit-on-jump");
@@ -243,6 +259,7 @@ pub fn run() -> io::Result<()> {
     // `App::to_snapshot` directly rather than shelling out to this.
     if std::env::args().any(|a| a == "--json") {
         let mut app = build_app(initial_theme.clone(), &cfg);
+        set_parse_error_status(&mut app, &parse_errors);
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -263,6 +280,7 @@ pub fn run() -> io::Result<()> {
     // --once flag: print snapshot and exit
     if std::env::args().any(|a| a == "--once") {
         let mut app = build_app(initial_theme.clone(), &cfg);
+        set_parse_error_status(&mut app, &parse_errors);
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {

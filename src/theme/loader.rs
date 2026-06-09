@@ -445,8 +445,9 @@ pub(crate) fn load_from_path_with_errors(
     Ok(parse_theme_body_with_errors(&body, &name))
 }
 
-/// Thin wrapper that discards parse errors. Existing callers that don't
-/// care about errors keep working unchanged.
+/// Thin wrapper that discards parse errors. Kept for tests; production
+/// callers route through `load_from_path_with_errors`.
+#[cfg(test)]
 pub(crate) fn load_from_path(path: &Path) -> Result<Theme, String> {
     load_from_path_with_errors(path).map(|(t, _)| t)
 }
@@ -483,6 +484,7 @@ pub(crate) fn lookup_chain_with_errors(
 /// returns a Theme. The returned theme has NOT had `apply_overrides`
 /// applied — callers must run that afterward if the config flag should
 /// affect it.
+#[cfg(test)]
 pub fn load_chain(config_root: &Path, name: &str) -> Theme {
     lookup_chain(config_root, name).unwrap_or_else(|| {
         let body = crate::theme::embedded::lookup("btop")
@@ -503,12 +505,6 @@ pub(crate) fn load_or_default_with_errors(
         lookup_chain_with_errors(&crate::config::xdg_config_dir(), name);
     apply_overrides(&mut theme, cfg);
     (theme, errors)
-}
-
-/// Thin wrapper that discards parse errors. Existing callers that don't
-/// care about errors keep working unchanged.
-pub fn load_or_default(name: &str, cfg: &AppConfig) -> Theme {
-    load_or_default_with_errors(name, cfg).0
 }
 
 #[cfg(test)]
