@@ -14,7 +14,8 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 | B1 — `--list-themes` / `--dump-theme` | [`specs/2026-06-09-list-and-dump-theme-design.md`](specs/2026-06-09-list-and-dump-theme-design.md) | [`plans/2026-06-09-list-and-dump-theme.md`](plans/2026-06-09-list-and-dump-theme.md) | 8 tasks; lib tests 203 → 214 |
 | B2 — t-cycle picks up user themes | [`specs/2026-06-09-t-cycle-user-themes-design.md`](specs/2026-06-09-t-cycle-user-themes-design.md) | [`plans/2026-06-09-t-cycle-user-themes.md`](plans/2026-06-09-t-cycle-user-themes.md) | 3 tasks + review fix; lib tests 214 → 217 |
 | B3 — `--theme <path>` accepts file paths | [`specs/2026-06-09-theme-absolute-path-design.md`](specs/2026-06-09-theme-absolute-path-design.md) | [`plans/2026-06-09-theme-absolute-path.md`](plans/2026-06-09-theme-absolute-path.md) | 5 tasks + README; lib tests 217 → 225 |
-| B4 — Malformed-theme banner | [`specs/2026-06-09-malformed-theme-banner-design.md`](specs/2026-06-09-malformed-theme-banner-design.md) | [`plans/2026-06-09-malformed-theme-banner.md`](plans/2026-06-09-malformed-theme-banner.md) | 7 tasks + TUI banner fix; lib tests 225 → 247 |
+| B4 — Malformed-theme banner | [`specs/2026-06-09-malformed-theme-banner-design.md`](specs/2026-06-09-malformed-theme-banner-design.md) | [`plans/2026-06-09-malformed-theme-banner.md`](plans/2026-06-09-malformed-theme-banner.md) | 7 tasks + TUI banner fix + README; lib tests 225 → 247 |
+| B5 — Reload active theme on file change | [`specs/2026-06-09-theme-reload-on-change-design.md`](specs/2026-06-09-theme-reload-on-change-design.md) | [`plans/2026-06-09-theme-reload-on-change.md`](plans/2026-06-09-theme-reload-on-change.md) | 4 tasks; lib tests 247 → 255 |
 
 13 embedded themes now ship: the original 12 plus `catppuccin-transparent` (catppuccin with `main_bg=""`), added post-Phase A as a baked-in convenience variant. Available via `--theme catppuccin-transparent` or `theme = "catppuccin-transparent"` in config.toml, without needing the `theme_background = false` flag.
 
@@ -89,10 +90,10 @@ The end-to-end transparency check requires running the interactive TUI in a term
 
 ## Phase B remaining items (deferred — separate spec each)
 
-B1 (`--list-themes` / `--dump-theme`), B2 (`t`-cycle picks up user themes), B3 (`--theme <path>`), and B4 (malformed-theme banner) shipped. Still open:
+All of B1-B5 shipped. Still open (each genuinely a separate spec now):
 
-
-- B5: Reload-on-file-change.
+- B5b: themes-dir watch — new files mid-session join `cycle_names` (B2's deferred follow-up).
+- B5c: config.toml watch — `theme_background` toggle takes effect live without restart.
 - B6: macOS `~/Library/Application Support/abtop/config.toml` → XDG migration (skip unless we ever share this fork).
 
 ## Final whole-Phase-B1 review
