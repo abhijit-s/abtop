@@ -542,6 +542,52 @@ impl App {
         self.theme_source = source;
     }
 
+    /// Re-stat the active theme's source file and reload if mtime has
+    /// advanced. Called from `App::tick`. No-op for embedded-only themes
+    /// (`theme_source.is_none()`).
+    fn check_for_theme_reload(&mut self) {
+        let Some(source) = self.theme_source.as_mut() else {
+            return;
+        };
+        let current_mtime = std::fs::metadata(&source.path)
+            .and_then(|m| m.modified())
+            .ok();
+        let needs_reload = match (current_mtime, source.mtime) {
+            (Some(now), Some(then)) => now > then,
+            (Some(_), None) => true, // file just appeared
+            (None, _) => {
+                source.mtime = None;
+                return;
+            }
+        };
+        if !needs_reload {
+            return;
+        }
+        let cfg = crate::config::load_config();
+        match crate::theme::load_from_path_with_errors(&source.path) {
+            Ok((mut new_theme, errors)) => {
+                crate::theme::apply_overrides(&mut new_theme, &cfg);
+                new_theme.name = self.theme.name.clone();
+                self.theme = new_theme;
+                source.mtime = current_mtime;
+                let count = errors.len();
+                let msg = if count == 0 {
+                    format!("theme '{}' reloaded", self.theme.name)
+                } else {
+                    let suffix = if count == 1 { "" } else { "s" };
+                    format!(
+                        "theme '{}' reloaded with {count} parse error{suffix}",
+                        self.theme.name
+                    )
+                };
+                self.set_status(msg);
+            }
+            Err(_) => {
+                // Transient read error; try again next tick.
+            }
+        }
+    }
+
     /// Set a transient status message that auto-clears after 3 seconds.
     pub fn set_status(&mut self, msg: String) {
         self.status_msg = Some((msg, Instant::now()));
@@ -553,6 +599,7 @@ impl App {
     pub fn tick(&mut self) {
         self.tick_no_summaries();
         self.drain_and_retry_summaries();
+        self.check_for_theme_reload();
     }
 
     /// Refresh all monitored data WITHOUT spawning background summary jobs.
@@ -1317,5 +1364,158 @@ mod theme_source_tests {
         };
         app.set_theme_source(Some(src.clone()));
         app.set_theme_source(None);
+    }
+
+    use std::time::Duration;
+
+    fn write_theme_file_with(path: &std::path::Path, body: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, body).unwrap();
+    }
+
+    fn read_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
+        std::fs::metadata(path).and_then(|m| m.modified()).ok()
+    }
+
+    #[test]
+    fn check_for_theme_reload_no_source_is_noop() {
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        let original_name = app.theme.name.clone();
+        app.check_for_theme_reload();
+        assert_eq!(app.theme.name, original_name);
+    }
+
+    #[test]
+    fn check_for_theme_reload_reloads_when_mtime_advances() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
+        let old_mtime = read_mtime(&path);
+
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime: old_mtime }));
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_theme_file_with(&path, r##"theme[main_bg]="#abcdef""##);
+
+        app.check_for_theme_reload();
+        use ratatui::style::Color;
+        assert_eq!(app.theme.main_bg, Color::Rgb(0xab, 0xcd, 0xef));
+    }
+
+    #[test]
+    fn check_for_theme_reload_no_op_when_mtime_unchanged() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
+        let mtime = read_mtime(&path);
+
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        let original_main_bg = app.theme.main_bg;
+        app.set_theme_source(Some(ThemeSource { path, mtime }));
+
+        app.check_for_theme_reload();
+        assert_eq!(app.theme.main_bg, original_main_bg);
+    }
+
+    #[test]
+    fn check_for_theme_reload_handles_missing_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("never-existed.theme");
+
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        let original_main_bg = app.theme.main_bg;
+        app.set_theme_source(Some(ThemeSource { path, mtime: None }));
+
+        app.check_for_theme_reload();
+        assert_eq!(app.theme.main_bg, original_main_bg);
+    }
+
+    #[test]
+    fn check_for_theme_reload_after_file_recreation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
+        let mtime = read_mtime(&path);
+
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+
+        std::fs::remove_file(&path).unwrap();
+        app.check_for_theme_reload();
+        std::thread::sleep(Duration::from_millis(50));
+        write_theme_file_with(&path, r##"theme[main_bg]="#abcdef""##);
+
+        app.check_for_theme_reload();
+        use ratatui::style::Color;
+        assert_eq!(app.theme.main_bg, Color::Rgb(0xab, 0xcd, 0xef));
+    }
+
+    #[test]
+    fn check_for_theme_reload_preserves_theme_name() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
+        let mtime = read_mtime(&path);
+
+        let mut app = App::new_with_config(
+            Theme::by_name("catppuccin").expect("embedded catppuccin"),
+            &[],
+            PanelVisibility::default(),
+        );
+        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_theme_file_with(&path, r##"theme[main_bg]="#abcdef""##);
+        app.check_for_theme_reload();
+
+        assert_eq!(app.theme.name, "catppuccin");
+    }
+
+    #[test]
+    fn check_for_theme_reload_status_message_with_parse_errors() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
+        let mtime = read_mtime(&path);
+
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_theme_file_with(&path, r##"theme[main_bg]="#XYZ""##);
+        app.check_for_theme_reload();
+
+        let status = app.status_msg.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
+        assert!(
+            status.contains("parse error"),
+            "status should mention parse error, got: {status:?}"
+        );
     }
 }
