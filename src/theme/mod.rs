@@ -5,6 +5,12 @@
 mod types;
 pub use types::{Gradient, Theme};
 
+mod loader;
+// Loader exports added incrementally:
+//   parse_theme_body  (Task 6)
+//   apply_overrides   (Task 7)
+//   load_or_default   (Task 10)
+
 use ratatui::style::Color;
 
 pub const THEME_NAMES: &[&str] = &[
