@@ -12,6 +12,7 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 |---|---|---|---|
 | A — theme files + transparency | [`specs/2026-06-09-theme-files-and-transparency-design.md`](specs/2026-06-09-theme-files-and-transparency-design.md) | [`plans/2026-06-09-theme-files-and-transparency.md`](plans/2026-06-09-theme-files-and-transparency.md) | 14 tasks + catppuccin-transparent variant; lib tests 0 → 203 |
 | B1 — `--list-themes` / `--dump-theme` | [`specs/2026-06-09-list-and-dump-theme-design.md`](specs/2026-06-09-list-and-dump-theme-design.md) | [`plans/2026-06-09-list-and-dump-theme.md`](plans/2026-06-09-list-and-dump-theme.md) | 8 tasks; lib tests 203 → 214 |
+| B2 — t-cycle picks up user themes | [`specs/2026-06-09-t-cycle-user-themes-design.md`](specs/2026-06-09-t-cycle-user-themes-design.md) | [`plans/2026-06-09-t-cycle-user-themes.md`](plans/2026-06-09-t-cycle-user-themes.md) | 3 tasks; lib tests 214 → 216 |
 
 13 embedded themes now ship: the original 12 plus `catppuccin-transparent` (catppuccin with `main_bg=""`), added post-Phase A as a baked-in convenience variant. Available via `--theme catppuccin-transparent` or `theme = "catppuccin-transparent"` in config.toml, without needing the `theme_background = false` flag.
 
@@ -49,6 +50,14 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 | 7 | README docs ("Discovering and editing themes" subsection) | done | `a67e7f2` |
 | 8 | Build + install + smoke | done | (no commit — install side effect) |
 
+### Phase B2 progress (3 tasks)
+
+| # | Task | Status | Commit |
+|---|---|---|---|
+| 1 | App `cycle_names` field + `set_cycle_names` setter + `cycle_theme` rewrite + 2 TDD tests | done | `09a357f` |
+| 2 | `build_app` populates `cycle_names` from `list_available`; remove temporary `#[allow(dead_code)]` | done | `ee840a9` |
+| 3 | Build + install + smoke | done | (no commit — install side effect) |
+
 ## Acceptance criteria (verified)
 
 ### Phase A
@@ -78,9 +87,8 @@ The end-to-end transparency check requires running the interactive TUI in a term
 
 ## Phase B remaining items (deferred — separate spec each)
 
-B1 (`--list-themes` / `--dump-theme`) shipped. Still open:
+B1 (`--list-themes` / `--dump-theme`) and B2 (`t`-cycle picks up user themes) shipped. Still open:
 
-- B2: `t`-cycle merges user-dir themes with embedded set.
 - B3: `abtop --theme <absolute-path>`.
 - B4: Banner in UI on malformed theme file.
 - B5: Reload-on-file-change.
