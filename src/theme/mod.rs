@@ -6,11 +6,9 @@ mod types;
 pub use types::{Gradient, Theme};
 
 mod loader;
-pub use loader::{apply_overrides, parse_theme_body};
+pub use loader::{apply_overrides, load_or_default, parse_theme_body};
 
 mod embedded;
-// Additional loader exports:
-//   load_or_default   (Task 10)
 
 use ratatui::style::Color;
 
@@ -31,21 +29,7 @@ pub const THEME_NAMES: &[&str] = &[
 
 impl Theme {
     pub fn by_name(name: &str) -> Option<Self> {
-        match name {
-            "btop" => Some(Self::btop()),
-            "dracula" => Some(Self::dracula()),
-            "catppuccin" => Some(Self::catppuccin()),
-            "tokyo-night" => Some(Self::tokyo_night()),
-            "gruvbox" => Some(Self::gruvbox()),
-            "nord" => Some(Self::nord()),
-            "light" => Some(Self::light()),
-            "white" => Some(Self::white()),
-            "high-contrast" => Some(Self::high_contrast()),
-            "protanopia" => Some(Self::protanopia()),
-            "deuteranopia" => Some(Self::deuteranopia()),
-            "tritanopia" => Some(Self::tritanopia()),
-            _ => None,
-        }
+        loader::lookup_chain(&crate::config::xdg_config_dir(), name)
     }
 
     /// btop default — exact RGB values from btop_theme.cpp Default_theme

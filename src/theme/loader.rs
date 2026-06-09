@@ -130,6 +130,50 @@ pub fn apply_overrides(theme: &mut Theme, cfg: &AppConfig) {
     }
 }
 
+use std::path::Path;
+
+/// Try to read and parse `<config_root>/abtop/themes/<name>.theme`.
+/// Returns Some(theme) on a successful read+parse; None if the file is
+/// missing or unreadable.
+fn try_user_file(config_root: &Path, name: &str) -> Option<Theme> {
+    let path = config_root
+        .join("abtop")
+        .join("themes")
+        .join(format!("{name}.theme"));
+    let body = std::fs::read_to_string(&path).ok()?;
+    Some(parse_theme_body(&body, name))
+}
+
+/// Resolve a theme by name, consulting (1) the user themes dir under
+/// `config_root`, then (2) the embedded BUILTIN table. Returns None if
+/// neither contains the name.
+pub fn lookup_chain(config_root: &Path, name: &str) -> Option<Theme> {
+    if let Some(t) = try_user_file(config_root, name) {
+        return Some(t);
+    }
+    crate::theme::embedded::lookup(name).map(|body| parse_theme_body(body, name))
+}
+
+/// Resolve a theme with a last-resort fallback to embedded `btop`. Always
+/// returns a Theme. The returned theme has NOT had `apply_overrides`
+/// applied — callers must run that afterward if the config flag should
+/// affect it.
+pub fn load_chain(config_root: &Path, name: &str) -> Theme {
+    lookup_chain(config_root, name).unwrap_or_else(|| {
+        let body = crate::theme::embedded::lookup("btop")
+            .expect("embedded btop is a build-time invariant");
+        parse_theme_body(body, "btop")
+    })
+}
+
+/// Public entry point used by startup. Resolves the name against the
+/// current XDG config root and applies config-level overrides.
+pub fn load_or_default(name: &str, cfg: &AppConfig) -> Theme {
+    let mut theme = load_chain(&crate::config::xdg_config_dir(), name);
+    apply_overrides(&mut theme, cfg);
+    theme
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +410,70 @@ theme[cached_grad_end]="#616263"
                 "'{name}' is in BUILTIN but not in THEME_NAMES"
             );
         }
+    }
+
+    use tempfile::TempDir;
+
+    fn write_theme_file(dir: &std::path::Path, name: &str, body: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.theme")), body).unwrap();
+    }
+
+    #[test]
+    fn load_chain_user_file_wins_over_embedded() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        write_theme_file(&themes_dir, "btop", r##"theme[main_fg]="#ff00ff""##);
+
+        let t = load_chain(tmp.path(), "btop");
+        assert_eq!(t.main_fg, Color::Rgb(0xff, 0x00, 0xff));
+        // main_bg comes from embedded btop, NOT overridden by the user file.
+        assert_eq!(t.main_bg, Color::Rgb(0x19, 0x19, 0x19));
+    }
+
+    #[test]
+    fn load_chain_falls_back_to_embedded_when_no_user_file() {
+        let tmp = TempDir::new().unwrap();
+        let t = load_chain(tmp.path(), "catppuccin");
+        assert_eq!(t.name, "catppuccin");
+        // Catppuccin main_fg = #cdd6f4.
+        assert_eq!(t.main_fg, Color::Rgb(0xcd, 0xd6, 0xf4));
+    }
+
+    #[test]
+    fn load_chain_unknown_name_falls_back_to_embedded_btop() {
+        let tmp = TempDir::new().unwrap();
+        let t = load_chain(tmp.path(), "nonexistent-theme-12345");
+        // Embedded btop's main_bg = #191919.
+        assert_eq!(t.main_bg, Color::Rgb(0x19, 0x19, 0x19));
+        // Falls back to btop name verbatim.
+        assert_eq!(t.name, "btop");
+    }
+
+    #[test]
+    fn lookup_chain_returns_some_for_embedded_name() {
+        let tmp = TempDir::new().unwrap();
+        let t = lookup_chain(tmp.path(), "dracula").unwrap();
+        assert_eq!(t.name, "dracula");
+    }
+
+    #[test]
+    fn lookup_chain_returns_some_for_user_dir_name() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        write_theme_file(
+            &themes_dir,
+            "my-custom",
+            r##"theme[main_fg]="#abcdef""##,
+        );
+        let t = lookup_chain(tmp.path(), "my-custom").unwrap();
+        assert_eq!(t.name, "my-custom");
+        assert_eq!(t.main_fg, Color::Rgb(0xab, 0xcd, 0xef));
+    }
+
+    #[test]
+    fn lookup_chain_returns_none_for_unknown_name() {
+        let tmp = TempDir::new().unwrap();
+        assert!(lookup_chain(tmp.path(), "no-such-thing").is_none());
     }
 }
