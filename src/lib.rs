@@ -119,6 +119,33 @@ pub fn run() -> io::Result<()> {
         return Ok(());
     }
 
+    // --dump-theme <name> [--force] flag: write an embedded theme body to the
+    // user themes dir so it can be edited in place. Exits without loading
+    // the config or building the app.
+    if let Some(pos) = std::env::args().position(|a| a == "--dump-theme") {
+        let val = std::env::args().nth(pos + 1);
+        let name = match val {
+            Some(n) if !n.starts_with('-') => n,
+            _ => {
+                eprintln!("--dump-theme requires a theme name");
+                let available: Vec<&str> = theme::THEME_NAMES.iter().copied().collect();
+                eprintln!("available: {}", available.join(", "));
+                std::process::exit(1);
+            }
+        };
+        let force = std::env::args().any(|a| a == "--force");
+        match theme::dump_embedded(&config::xdg_config_dir(), &name, force) {
+            Ok(path) => {
+                println!("wrote {}", path.display());
+                return Ok(());
+            }
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Load config once; it drives both the default theme and the hidden-agents list.
     let cfg = config::load_config();
 
