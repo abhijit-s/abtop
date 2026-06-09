@@ -6,7 +6,12 @@ mod types;
 pub use types::{Gradient, Theme};
 
 mod loader;
-pub use loader::{apply_overrides, dump_embedded, list_available, load_or_default, Source, ThemeListing};
+// Loader helpers are crate-internal: app.rs / lib.rs / cycle_theme consume them,
+// but nothing outside the crate should bind to these names (the crate is
+// published to crates.io and these are wiring details, not stable API).
+pub(crate) use loader::{
+    apply_overrides, dump_embedded, list_available, load_or_default, Source,
+};
 
 mod embedded;
 
