@@ -1,51 +1,11 @@
+//! Theme module — types live in `types`. Constructors below are temporary
+//! and will be removed once embedded `.theme` files become the source of
+//! truth (Task 12).
+
+mod types;
+pub use types::{Gradient, Theme};
+
 use ratatui::style::Color;
-
-pub struct Gradient {
-    pub start: (u8, u8, u8),
-    pub mid: (u8, u8, u8),
-    pub end: (u8, u8, u8),
-}
-
-pub struct Theme {
-    pub name: &'static str,
-
-    // base
-    pub main_bg: Color,
-    pub main_fg: Color,
-    pub title: Color,
-    pub hi_fg: Color,
-    pub selected_bg: Color,
-    pub selected_fg: Color,
-    pub inactive_fg: Color,
-    pub graph_text: Color,
-    pub meter_bg: Color,
-    pub proc_misc: Color,
-    pub div_line: Color,
-    pub session_id: Color,
-
-    // semantic colors
-    pub status_fg: Color,
-    pub warning_fg: Color,
-
-    // box borders
-    pub cpu_box: Color,
-    pub mem_box: Color,
-    pub net_box: Color,
-    pub proc_box: Color,
-
-    // gradients
-    pub cpu_grad: Gradient,
-    pub proc_grad: Gradient,
-    pub used_grad: Gradient,
-    pub free_grad: Gradient,
-    pub cached_grad: Gradient,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Self::btop()
-    }
-}
 
 pub const THEME_NAMES: &[&str] = &[
     "btop",
@@ -84,7 +44,7 @@ impl Theme {
     /// btop default — exact RGB values from btop_theme.cpp Default_theme
     pub fn btop() -> Self {
         Self {
-            name: "btop",
+            name: "btop".to_string(),
             main_bg: Color::Rgb(25, 25, 25),
             main_fg: Color::Rgb(204, 204, 204),
             title: Color::Rgb(238, 238, 238),
@@ -133,7 +93,7 @@ impl Theme {
 
     pub fn dracula() -> Self {
         Self {
-            name: "dracula",
+            name: "dracula".to_string(),
             main_bg: Color::Rgb(40, 42, 54),
             main_fg: Color::Rgb(248, 248, 242),
             title: Color::Rgb(248, 248, 242),
@@ -183,7 +143,7 @@ impl Theme {
     pub fn catppuccin() -> Self {
         // Catppuccin Mocha palette
         Self {
-            name: "catppuccin",
+            name: "catppuccin".to_string(),
             main_bg: Color::Rgb(30, 30, 46),
             main_fg: Color::Rgb(205, 214, 244),
             title: Color::Rgb(205, 214, 244),
@@ -233,7 +193,7 @@ impl Theme {
     pub fn tokyo_night() -> Self {
         // Tokyo Night — night variant
         Self {
-            name: "tokyo-night",
+            name: "tokyo-night".to_string(),
             main_bg: Color::Rgb(26, 27, 38),        // bg #1a1b26
             main_fg: Color::Rgb(169, 177, 214),     // fg_dark #a9b1d6
             title: Color::Rgb(192, 202, 245),       // fg #c0caf5
@@ -283,7 +243,7 @@ impl Theme {
     pub fn gruvbox() -> Self {
         // gruvbox dark — bright accent variants for TUI visibility
         Self {
-            name: "gruvbox",
+            name: "gruvbox".to_string(),
             main_bg: Color::Rgb(40, 40, 40),        // bg0 #282828
             main_fg: Color::Rgb(235, 219, 178),     // fg1 #ebdbb2
             title: Color::Rgb(251, 241, 199),       // fg0 #fbf1c7
@@ -333,7 +293,7 @@ impl Theme {
     pub fn nord() -> Self {
         // Nord — arctic color palette
         Self {
-            name: "nord",
+            name: "nord".to_string(),
             main_bg: Color::Rgb(46, 52, 64),        // nord0 #2e3440
             main_fg: Color::Rgb(216, 222, 233),     // nord4 #d8dee9
             title: Color::Rgb(236, 239, 244),       // nord6 #eceff4
@@ -384,7 +344,7 @@ impl Theme {
     /// muted accents for users on bright terminals.
     pub fn light() -> Self {
         Self {
-            name: "light",
+            name: "light".to_string(),
             main_bg: Color::Rgb(253, 246, 227), // base3 #fdf6e3
             main_fg: Color::Rgb(88, 110, 117),  // base01 #586e75
             title: Color::Rgb(7, 54, 66),       // base02 #073642
@@ -435,7 +395,7 @@ impl Theme {
     /// crisp accent colors for users on bright terminals.
     pub fn white() -> Self {
         Self {
-            name: "white",
+            name: "white".to_string(),
             main_bg: Color::Rgb(255, 255, 255),     // white
             main_fg: Color::Rgb(31, 35, 40),        // gh fg.default #1f2328
             title: Color::Rgb(0, 0, 0),             // black
@@ -487,7 +447,7 @@ impl Theme {
     /// any color vision deficiency).
     pub fn high_contrast() -> Self {
         Self {
-            name: "high-contrast",
+            name: "high-contrast".to_string(),
             main_bg: Color::Rgb(0, 0, 0),
             main_fg: Color::Rgb(255, 255, 255),
             title: Color::Rgb(255, 255, 255),
@@ -539,7 +499,7 @@ impl Theme {
     /// magenta #DC267F, orange #FE6100, yellow #FFB000.
     pub fn protanopia() -> Self {
         Self {
-            name: "protanopia",
+            name: "protanopia".to_string(),
             main_bg: Color::Rgb(20, 20, 32),
             main_fg: Color::Rgb(220, 220, 220),
             title: Color::Rgb(255, 255, 255),
@@ -591,7 +551,7 @@ impl Theme {
     /// distinguish most reliably.
     pub fn deuteranopia() -> Self {
         Self {
-            name: "deuteranopia",
+            name: "deuteranopia".to_string(),
             main_bg: Color::Rgb(18, 24, 40),
             main_fg: Color::Rgb(222, 222, 230),
             title: Color::Rgb(255, 255, 255),
@@ -642,7 +602,7 @@ impl Theme {
     /// confusion. Inspired by GitHub's tritanopia-friendly colors.
     pub fn tritanopia() -> Self {
         Self {
-            name: "tritanopia",
+            name: "tritanopia".to_string(),
             main_bg: Color::Rgb(24, 20, 22),
             main_fg: Color::Rgb(224, 224, 224),
             title: Color::Rgb(255, 255, 255),
@@ -687,6 +647,12 @@ impl Theme {
                 end: (64, 196, 208),
             },
         }
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self::btop()
     }
 }
 
