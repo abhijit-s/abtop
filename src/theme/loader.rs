@@ -226,6 +226,15 @@ pub fn list_available(config_root: &Path) -> Vec<ThemeListing> {
                 if stem.is_empty() {
                     return None;
                 }
+                // Restrict to a safe character set so filenames can't
+                // smuggle TOML metacharacters into config.toml when
+                // cycle_theme later calls save_theme(name).
+                if !stem
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+                {
+                    return None;
+                }
                 Some(stem.to_owned())
             })
             .collect(),
@@ -711,6 +720,27 @@ theme[cached_grad_end]="#616263"
             .position(|(n, _)| *n == "catppuccin")
             .unwrap();
         assert_eq!(pos, builtin_pos);
+    }
+
+    #[test]
+    fn list_available_skips_filenames_with_unsafe_chars() {
+        // Filenames that would smuggle TOML metacharacters into save_theme
+        // must be rejected at the listing stage.
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        // Embedded quote: would break the `theme = "<name>"` TOML write.
+        std::fs::write(themes_dir.join("evil\".theme"), "junk").unwrap();
+        // Embedded newline: would split the TOML line.
+        std::fs::write(themes_dir.join("two\nlines.theme"), "junk").unwrap();
+        // Space: not strictly TOML-dangerous but also not a sane theme name.
+        std::fs::write(themes_dir.join("with space.theme"), "junk").unwrap();
+
+        let listings = list_available(tmp.path());
+
+        // None of the unsafe-named files should appear.
+        assert_eq!(listings.len(), 13);
+        assert!(listings.iter().all(|l| l.source == Source::Builtin));
     }
 
     #[test]

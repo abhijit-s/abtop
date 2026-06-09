@@ -102,7 +102,8 @@ Empty values on the `*_grad_*` gradient channels fall back to btop's
 gradient instead — gradients are RGB tuples and have no terminal-default
 representation.
 
-User-dir files override embedded themes of the same name.
+User-dir files override embedded themes of the same name. Custom themes also
+join the `t`-key cycle at startup; mid-session additions require a restart.
 
 ### Discovering and editing themes
 
