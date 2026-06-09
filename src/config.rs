@@ -55,6 +55,22 @@ fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("abtop").join("config.toml"))
 }
 
+fn xdg_config_dir_inner(xdg_env: Option<String>, home: Option<PathBuf>) -> PathBuf {
+    if let Some(x) = xdg_env {
+        if !x.is_empty() {
+            return PathBuf::from(x);
+        }
+    }
+    if let Some(h) = home {
+        return h.join(".config");
+    }
+    PathBuf::from(".")
+}
+
+pub fn xdg_config_dir() -> PathBuf {
+    xdg_config_dir_inner(std::env::var("XDG_CONFIG_HOME").ok(), dirs::home_dir())
+}
+
 pub fn load_config() -> AppConfig {
     let path = match config_path() {
         Some(p) => p,
@@ -313,6 +329,36 @@ mod tests {
         assert_eq!(parse_bool("true"), Some(true));
         assert_eq!(parse_bool("False"), Some(false));
         assert_eq!(parse_bool("nope"), None);
+    }
+
+    #[test]
+    fn xdg_config_dir_inner_uses_env_when_set() {
+        let result = xdg_config_dir_inner(
+            Some("/explicit/xdg".to_string()),
+            Some(PathBuf::from("/home/user")),
+        );
+        assert_eq!(result, PathBuf::from("/explicit/xdg"));
+    }
+
+    #[test]
+    fn xdg_config_dir_inner_falls_back_to_home_when_env_empty() {
+        let result = xdg_config_dir_inner(
+            Some(String::new()),
+            Some(PathBuf::from("/home/user")),
+        );
+        assert_eq!(result, PathBuf::from("/home/user/.config"));
+    }
+
+    #[test]
+    fn xdg_config_dir_inner_falls_back_to_home_when_env_missing() {
+        let result = xdg_config_dir_inner(None, Some(PathBuf::from("/home/user")));
+        assert_eq!(result, PathBuf::from("/home/user/.config"));
+    }
+
+    #[test]
+    fn xdg_config_dir_inner_returns_dot_when_both_missing() {
+        let result = xdg_config_dir_inner(None, None);
+        assert_eq!(result, PathBuf::from("."));
     }
 
     #[test]
