@@ -79,12 +79,18 @@ use std::time::Duration;
 /// Construct a headless `App` from loaded config + theme. Shared by the
 /// `--json` and `--once` entry points.
 fn build_app(theme: theme::Theme, cfg: &config::AppConfig) -> App {
-    App::new_with_config_and_claude_dirs(
+    let mut app = App::new_with_config_and_claude_dirs(
         theme,
         &cfg.hidden_agents,
         cfg.panels,
         &cfg.claude_config_dirs,
-    )
+    );
+    let cycle_names: Vec<String> = theme::list_available(&config::xdg_config_dir())
+        .into_iter()
+        .map(|l| l.name)
+        .collect();
+    app.set_cycle_names(cycle_names);
+    app
 }
 
 pub fn run() -> io::Result<()> {

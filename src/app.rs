@@ -513,7 +513,6 @@ impl App {
     /// so user-dir themes appear in the cycle alongside embedded ones.
     /// Empty input is accepted and triggers the `THEME_NAMES` fallback
     /// in `cycle_theme`.
-    #[allow(dead_code)] // wired up by build_app in Phase B2 Task 2
     pub(crate) fn set_cycle_names(&mut self, names: Vec<String>) {
         self.cycle_names = names;
     }
