@@ -105,17 +105,56 @@ fn apply_kv(theme: &mut Theme, key: &str, value: &str) {
     }
 }
 
-/// Parse a btop-style theme body. Returns a fully-populated Theme: missing
-/// keys are backfilled from the embedded btop default. The returned theme's
-/// `name` is the caller-supplied `name`.
-pub fn parse_theme_body(body: &str, name: &str) -> Theme {
-    let mut theme = Theme::btop();
-    theme.name = name.to_string();
+/// A Theme with every Color::Reset and every gradient zero'd. Used as the
+/// starting point for parsing — the embedded btop body fills it in before
+/// the caller's body is applied.
+fn empty_theme() -> Theme {
+    Theme {
+        name: String::new(),
+        main_bg: Color::Reset,
+        main_fg: Color::Reset,
+        title: Color::Reset,
+        hi_fg: Color::Reset,
+        selected_bg: Color::Reset,
+        selected_fg: Color::Reset,
+        inactive_fg: Color::Reset,
+        graph_text: Color::Reset,
+        meter_bg: Color::Reset,
+        proc_misc: Color::Reset,
+        div_line: Color::Reset,
+        session_id: Color::Reset,
+        status_fg: Color::Reset,
+        warning_fg: Color::Reset,
+        cpu_box: Color::Reset,
+        mem_box: Color::Reset,
+        net_box: Color::Reset,
+        proc_box: Color::Reset,
+        cpu_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
+        proc_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
+        used_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
+        free_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
+        cached_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
+    }
+}
+
+fn apply_body(theme: &mut Theme, body: &str) {
     for line in body.lines() {
         if let Some((k, v)) = parse_line(line) {
-            apply_kv(&mut theme, k, v);
+            apply_kv(theme, k, v);
         }
     }
+}
+
+/// Parse a btop-style theme body. Returns a fully-populated Theme: the
+/// embedded btop body is applied first so missing keys inherit btop's
+/// values, then the caller's body overrides on top.
+pub fn parse_theme_body(body: &str, name: &str) -> Theme {
+    let mut theme = empty_theme();
+    let btop_body = crate::theme::embedded::lookup("btop")
+        .expect("embedded btop is a build-time invariant");
+    apply_body(&mut theme, btop_body);
+    apply_body(&mut theme, body);
+    theme.name = name.to_string();
     theme
 }
 
@@ -324,7 +363,7 @@ theme[cached_grad_end]="#616263"
 
     #[test]
     fn apply_overrides_force_transparent_with_opaque_theme() {
-        let mut t = Theme::btop();
+        let mut t = Theme::by_name("btop").unwrap();
         let original_bg = t.main_bg;
         apply_overrides(&mut t, &cfg_with_bg(false));
         assert_eq!(t.main_bg, Color::Reset);
@@ -333,7 +372,7 @@ theme[cached_grad_end]="#616263"
 
     #[test]
     fn apply_overrides_keep_theme_when_flag_default_true() {
-        let mut t = Theme::btop();
+        let mut t = Theme::by_name("btop").unwrap();
         let original_bg = t.main_bg;
         apply_overrides(&mut t, &cfg_with_bg(true));
         assert_eq!(t.main_bg, original_bg);
@@ -341,7 +380,7 @@ theme[cached_grad_end]="#616263"
 
     #[test]
     fn apply_overrides_leaves_other_bg_fields_alone() {
-        let mut t = Theme::btop();
+        let mut t = Theme::by_name("btop").unwrap();
         let original_selected = t.selected_bg;
         let original_meter = t.meter_bg;
         apply_overrides(&mut t, &cfg_with_bg(false));
@@ -351,46 +390,29 @@ theme[cached_grad_end]="#616263"
 
     #[test]
     fn apply_overrides_already_reset_main_bg_stays_reset() {
-        let mut t = Theme::btop();
+        let mut t = Theme::by_name("btop").unwrap();
         t.main_bg = Color::Reset;
         apply_overrides(&mut t, &cfg_with_bg(true));
         assert_eq!(t.main_bg, Color::Reset);
     }
 
     #[test]
-    fn every_embedded_theme_matches_its_rust_constructor() {
-        let pairs: &[(&str, fn() -> Theme)] = &[
-            ("btop",          Theme::btop),
-            ("dracula",       Theme::dracula),
-            ("catppuccin",    Theme::catppuccin),
-            ("tokyo-night",   Theme::tokyo_night),
-            ("gruvbox",       Theme::gruvbox),
-            ("nord",          Theme::nord),
-            ("light",         Theme::light),
-            ("white",         Theme::white),
-            ("high-contrast", Theme::high_contrast),
-            ("protanopia",    Theme::protanopia),
-            ("deuteranopia",  Theme::deuteranopia),
-            ("tritanopia",    Theme::tritanopia),
-        ];
-        let mut failures: Vec<String> = Vec::new();
-        for (name, ctor) in pairs {
-            let body = crate::theme::embedded::lookup(name)
-                .unwrap_or_else(|| panic!("'{name}' missing from BUILTIN"));
-            let parsed = parse_theme_body(body, name);
-            let from_rust = ctor();
-            if parsed != from_rust {
-                failures.push(format!(
-                    "  '{name}' drift:\n    parsed: {:?}\n    rust:   {:?}",
-                    parsed, from_rust
-                ));
+    fn every_embedded_theme_parses_to_full_palette() {
+        let btop_body = crate::theme::embedded::lookup("btop").expect("btop in BUILTIN");
+        let btop_baseline = parse_theme_body(btop_body, "btop");
+        for (name, body) in crate::theme::embedded::BUILTIN.iter() {
+            let t = parse_theme_body(body, name);
+            assert_eq!(t.name, *name);
+            if *name != "btop" {
+                // A non-btop theme that parses identically to btop (apart from name)
+                // means its file was empty / unparseable.
+                let renamed_btop = Theme { name: name.to_string(), ..btop_baseline.clone() };
+                assert_ne!(
+                    t, renamed_btop,
+                    "embedded '{name}' parsed identically to btop — file may be empty or all keys unrecognized"
+                );
             }
         }
-        assert!(
-            failures.is_empty(),
-            "embedded themes drifted from Rust constructors:\n{}",
-            failures.join("\n")
-        );
     }
 
     #[test]
