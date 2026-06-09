@@ -2,9 +2,20 @@
 
 Resume pointer for theming + transparency work on the local abtop fork.
 
-## Status: Phase A done + catppuccin-transparent variant + Phase B1 done
+## Status: Phase A + B1-B5 shipped. Open: B5b, B5c. (B6 skipped.)
 
 Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
+HEAD: `b3b3624`. 256 lib tests passing.
+
+### Resume from cold start
+
+1. `cd ~/my-workspace/util/abtop`
+2. `git log --oneline -3` — should show `b3b3624 docs: record B5 final-review closure` on top.
+3. `cat docs/superpowers/TRACKING.md` (this file) to see what's done + open.
+4. Open items (each is a standalone mini-spec):
+   - **B5b — themes-dir watch** (recommended next, ~30 min). Drop a new `.theme` file into `$XDG_CONFIG_HOME/abtop/themes/` mid-session → it joins the `t`-cycle on the next tick. Sibling poll to `check_for_theme_reload`; one new mtime field on App; ~30-50 LOC + 2 tests.
+   - **B5c — config.toml watch** (~1-2 hours). Live `theme_background` toggle. Add a second source field for config.toml on App; on mtime advance, `load_config()` + `apply_overrides`. ~100 LOC + tests. Lower value (toggle is rarely changed).
+   - **B6 — macOS migration** — explicitly skipped (this machine never had the legacy path).
 
 ### Phases shipped
 
