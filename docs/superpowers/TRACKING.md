@@ -5,9 +5,11 @@ Resume pointer for the work specified in
 and planned in
 [`plans/2026-06-09-theme-files-and-transparency.md`](plans/2026-06-09-theme-files-and-transparency.md).
 
-## Status: Phase A complete
+## Status: Phase A complete + catppuccin-transparent variant added
 
 Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
+
+13 embedded themes now ship: the original 12 plus `catppuccin-transparent` (catppuccin with `main_bg=""`), added post-Phase A as a baked-in convenience variant. Available via `--theme catppuccin-transparent` or `theme = "catppuccin-transparent"` in config.toml, without needing the `theme_background = false` flag.
 
 ### Phase A progress (14 tasks)
 
@@ -28,16 +30,18 @@ Last updated: 2026-06-09. Binary installed at `~/.local/libexec/abtop`.
 | 12 | Delete the 12 Rust constructors | done | `d43bfc3` |
 | 13 | Update README | done | `a2d2acc` |
 | 14 | Build release and install to `~/.local/libexec/abtop` | done | (no commit — install side effect) |
+| 15 | Add `catppuccin-transparent` embedded variant (post-Phase A) | done | `13a13a5` |
 
 ## Acceptance criteria (verified)
 
 - ✅ `cargo test --lib` is green (202 tests).
 - ✅ `cargo build --release` produces a working binary.
 - ✅ `abtop --once` runs without panicking.
-- ✅ Three smoke tests pass:
+- ✅ Four smoke tests pass:
   - Default snapshot output.
   - `theme = "catppuccin"` + `theme_background = false` in `~/.config/abtop/config.toml`.
   - User-defined `~/.config/abtop/themes/loud.theme` resolved via `--theme loud`.
+  - `--theme catppuccin-transparent` resolves the embedded variant.
 - ✅ Binary installed at `~/.local/libexec/abtop` (on PATH via env-osx.zsh).
 
 ## Visual confirmation pending
