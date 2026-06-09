@@ -6,7 +6,7 @@ mod types;
 pub use types::{Gradient, Theme};
 
 mod loader;
-pub use loader::{apply_overrides, load_or_default, parse_theme_body};
+pub use loader::{apply_overrides, load_or_default};
 
 mod embedded;
 

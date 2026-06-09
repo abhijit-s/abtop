@@ -173,8 +173,12 @@ use std::path::Path;
 
 /// Try to read and parse `<config_root>/abtop/themes/<name>.theme`.
 /// Returns Some(theme) on a successful read+parse; None if the file is
-/// missing or unreadable.
+/// missing or unreadable. Rejects names containing path separators or `..`
+/// so a CLI/config theme name can't escape the themes directory.
 fn try_user_file(config_root: &Path, name: &str) -> Option<Theme> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return None;
+    }
     let path = config_root
         .join("abtop")
         .join("themes")
@@ -497,5 +501,17 @@ theme[cached_grad_end]="#616263"
     fn lookup_chain_returns_none_for_unknown_name() {
         let tmp = TempDir::new().unwrap();
         assert!(lookup_chain(tmp.path(), "no-such-thing").is_none());
+    }
+
+    #[test]
+    fn lookup_chain_rejects_path_traversal_names() {
+        let tmp = TempDir::new().unwrap();
+        // Even if a file at the traversal target exists, the guard must fire.
+        std::fs::write(tmp.path().join("evil.theme"), "theme[main_fg]=\"#ff0000\"").unwrap();
+        assert!(lookup_chain(tmp.path(), "../evil").is_none());
+        assert!(lookup_chain(tmp.path(), "..").is_none());
+        assert!(lookup_chain(tmp.path(), "sub/name").is_none());
+        assert!(lookup_chain(tmp.path(), "name\\with\\backslash").is_none());
+        assert!(lookup_chain(tmp.path(), "").is_none());
     }
 }

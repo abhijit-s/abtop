@@ -70,13 +70,17 @@ tmux new -s work
 
 ## Theming
 
-abtop ships with 12 embedded themes. Pick one with `--theme <name>` or set
+abtop ships with 13 embedded themes. Pick one with `--theme <name>` or set
 `theme = "<name>"` in `$XDG_CONFIG_HOME/abtop/config.toml` (default
 `~/.config/abtop/config.toml`).
 
-Available: `btop`, `dracula`, `catppuccin`, `tokyo-night`, `gruvbox`,
-`nord`, `light`, `white`, `high-contrast`, `protanopia`, `deuteranopia`,
-`tritanopia`.
+Available: `btop`, `dracula`, `catppuccin`, `catppuccin-transparent`,
+`tokyo-night`, `gruvbox`, `nord`, `light`, `white`, `high-contrast`,
+`protanopia`, `deuteranopia`, `tritanopia`.
+
+`catppuccin-transparent` is identical to `catppuccin` but with `main_bg`
+empty so the terminal background shows through — equivalent to setting
+`theme_background = false` (below) without editing config.
 
 ### Custom themes
 
@@ -94,6 +98,9 @@ theme[selected_bg]="#313244"
 Missing keys inherit from the embedded `btop` theme. Empty values on any
 `Color` field render as `Color::Reset` (the terminal's own default), which
 on terminals with transparency configured lets the background show through.
+Empty values on the `*_grad_*` gradient channels fall back to btop's
+gradient instead — gradients are RGB tuples and have no terminal-default
+representation.
 
 User-dir files override embedded themes of the same name.
 
@@ -129,7 +136,7 @@ OpenCode support reads the local SQLite database at `~/.local/share/opencode/ope
 
 ## Themes
 
-12 built-in themes, including 4 colorblind-friendly options (`high-contrast`, `protanopia`, `deuteranopia`, `tritanopia`). Press `t` to cycle at runtime, or launch with `--theme <name>`. Your choice is saved to `~/.config/abtop/config.toml`.
+13 built-in themes, including a transparent variant (`catppuccin-transparent`) and 4 colorblind-friendly options (`high-contrast`, `protanopia`, `deuteranopia`, `tritanopia`). Press `t` to cycle at runtime, or launch with `--theme <name>`. Your choice is saved to `~/.config/abtop/config.toml`. See the [Theming](#theming) section above for the full list and custom-theme format.
 
 | btop (default) | dracula | catppuccin |
 |:-:|:-:|:-:|
