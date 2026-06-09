@@ -5,6 +5,28 @@ use ratatui::style::Color;
 use crate::config::AppConfig;
 use crate::theme::Theme;
 
+/// A single parse failure encountered while reading a theme body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParseError {
+    /// 1-indexed line number where the error was detected.
+    pub line: usize,
+    /// The trimmed line content (for display in detailed reports).
+    pub content: String,
+    /// What went wrong.
+    pub reason: ParseErrorReason,
+}
+
+/// Why a line in a theme body failed to parse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ParseErrorReason {
+    /// Line started with `theme[` but couldn't be tokenized into (key, value).
+    Malformed,
+    /// Key parsed cleanly but isn't in the 33-key set.
+    UnknownKey(String),
+    /// Value is non-empty and doesn't match the `#hex` form.
+    InvalidHex(String),
+}
+
 /// Parse a hex color string with required `#` prefix.
 /// Supports `#RRGGBB` (6-digit) and `#RGB` (3-digit, expanded to RRGGBB).
 /// Case-insensitive. Returns None for anything else (no named colors, no
@@ -902,5 +924,26 @@ theme[cached_grad_end]="#616263"
         std::fs::write(&path, "").unwrap();
         let t = load_from_path(&path).expect("load should succeed");
         assert_eq!(t.name, "x");
+    }
+
+    #[test]
+    fn parse_error_types_basics() {
+        let e = ParseError {
+            line: 7,
+            content: "theme[main_bg]=\"#XYZ\"".to_string(),
+            reason: ParseErrorReason::InvalidHex("#XYZ".to_string()),
+        };
+        assert_eq!(e.line, 7);
+        assert_eq!(e.reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+        assert_ne!(
+            ParseErrorReason::Malformed,
+            ParseErrorReason::UnknownKey("x".to_string())
+        );
+        assert_ne!(
+            ParseErrorReason::Malformed,
+            ParseErrorReason::InvalidHex("x".to_string())
+        );
+        let _ = format!("{e:?}");
+        let _ = e.clone();
     }
 }
