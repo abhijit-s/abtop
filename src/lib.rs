@@ -201,20 +201,38 @@ pub fn run() -> io::Result<()> {
             }
         });
 
-    // Validate CLI --theme exists in user dir or embedded; hard-fail if not.
-    if let Some(name) = &cli_theme_name {
-        if theme::Theme::by_name(name).is_none() {
-            eprintln!(
-                "unknown theme '{}'. available: {}",
-                name,
-                theme::THEME_NAMES.join(", ")
-            );
-            std::process::exit(1);
+    let initial_theme: theme::Theme = match &cli_theme_name {
+        Some(arg) if is_theme_path_arg(arg) => {
+            // Path mode: read the file directly, apply config overrides,
+            // do NOT save_theme (path themes are one-shot).
+            let path = expand_tilde(arg);
+            match theme::load_from_path(&path) {
+                Ok(mut t) => {
+                    theme::apply_overrides(&mut t, &cfg);
+                    t
+                }
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    std::process::exit(1);
+                }
+            }
         }
-    }
-
-    let resolved_name = cli_theme_name.unwrap_or_else(|| cfg.theme.clone());
-    let initial_theme: theme::Theme = theme::load_or_default(&resolved_name, &cfg);
+        Some(name) => {
+            // Name mode: existing flow. Validate via by_name and hard-fail
+            // on miss, then load_or_default + apply_overrides happen inside
+            // load_or_default itself.
+            if theme::Theme::by_name(name).is_none() {
+                eprintln!(
+                    "unknown theme '{}'. available: {}",
+                    name,
+                    theme::THEME_NAMES.join(", ")
+                );
+                std::process::exit(1);
+            }
+            theme::load_or_default(name, &cfg)
+        }
+        None => theme::load_or_default(&cfg.theme, &cfg),
+    };
 
     let demo_mode = std::env::args().any(|a| a == "--demo");
     let exit_on_jump = std::env::args().any(|a| a == "--exit-on-jump");
