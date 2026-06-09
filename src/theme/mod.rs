@@ -6,7 +6,7 @@ mod types;
 pub use types::{Gradient, Theme};
 
 mod loader;
-pub use loader::{apply_overrides, load_or_default};
+pub use loader::{apply_overrides, dump_embedded, list_available, load_or_default, Source, ThemeListing};
 
 mod embedded;
 
