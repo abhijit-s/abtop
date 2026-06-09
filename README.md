@@ -104,6 +104,46 @@ representation.
 
 User-dir files override embedded themes of the same name.
 
+### Discovering and editing themes
+
+List all themes available right now — embedded plus anything you've dropped
+into `$XDG_CONFIG_HOME/abtop/themes/`:
+
+```sh
+$ abtop --list-themes
+btop (built-in)
+dracula (built-in)
+catppuccin (built-in)
+catppuccin-transparent (built-in)
+tokyo-night (built-in)
+gruvbox (built-in)
+nord (built-in)
+light (built-in)
+white (built-in)
+high-contrast (built-in)
+protanopia (built-in)
+deuteranopia (built-in)
+tritanopia (built-in)
+```
+
+If a user file shadows an embedded theme of the same name, the embedded
+entry is marked `(user override)`. User-only themes (no embedded
+counterpart) are appended at the bottom and marked `(user)`.
+
+To edit one of the built-in themes, dump its body to the user dir first:
+
+```sh
+$ abtop --dump-theme catppuccin
+wrote /home/me/.config/abtop/themes/catppuccin.theme
+
+$ $EDITOR ~/.config/abtop/themes/catppuccin.theme
+# tweak away; user file now overrides the embedded version
+```
+
+`--dump-theme` refuses to overwrite an existing file. Pass `--force` to
+overwrite. Only embedded themes can be dumped (user-only themes are
+already on disk).
+
 ### Transparent background
 
 Add `theme_background = false` to your `config.toml` to force `main_bg` to
