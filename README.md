@@ -119,6 +119,10 @@ quotes), abtop shows a 3-second footer banner at launch with the error
 count. The theme still loads — the broken fields fall back to btop
 defaults — so you can iterate without abtop becoming unusable.
 
+Edits to the active `.theme` file are picked up automatically on the
+next tick (~2 seconds) — no need to restart abtop. The footer briefly
+shows `theme '<name>' reloaded` (or `… with N parse errors` if any).
+
 User-dir files override embedded themes of the same name. Custom themes also
 join the `t`-key cycle at startup; mid-session additions require a restart.
 

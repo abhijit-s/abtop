@@ -96,6 +96,22 @@ pub(crate) struct ThemeSource {
     pub mtime: Option<std::time::SystemTime>,
 }
 
+/// Resolve the on-disk source for a theme name by checking
+/// `$XDG_CONFIG_HOME/abtop/themes/<name>.theme`. Returns Some(path, mtime)
+/// if the file exists, None for embedded-only themes. Shared between
+/// startup (lib.rs) and runtime cycle (App::cycle_theme).
+pub(crate) fn source_for_name(name: &str) -> Option<ThemeSource> {
+    let path = crate::config::xdg_config_dir()
+        .join("abtop")
+        .join("themes")
+        .join(format!("{name}.theme"));
+    if !path.exists() {
+        return None;
+    }
+    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    Some(ThemeSource { path, mtime })
+}
+
 pub struct App {
     pub sessions: Vec<AgentSession>,
     pub selected: usize,
@@ -518,6 +534,11 @@ impl App {
         let mut new_theme = Theme::by_name(&next_name).unwrap_or_default();
         crate::theme::apply_overrides(&mut new_theme, &cfg);
         self.theme = new_theme;
+        // Update the reload source so subsequent ticks poll the file
+        // backing the newly-selected theme — NOT the previous one.
+        // Cycling to an embedded-only theme clears the source so reload
+        // polling correctly stops.
+        self.theme_source = source_for_name(&next_name);
         if let Err(e) = crate::config::save_theme(&next_name) {
             self.set_status(format!("theme: {} (save failed: {})", next_name, e));
         } else {
@@ -1492,6 +1513,48 @@ mod theme_source_tests {
         app.check_for_theme_reload();
 
         assert_eq!(app.theme.name, "catppuccin");
+    }
+
+    #[test]
+    fn cycle_theme_clears_theme_source_when_target_has_no_user_file() {
+        // Set source to point at some path (simulating launch with a
+        // user-dir theme), cycle to btop (embedded, no user file in this
+        // test environment), and assert theme_source becomes None so the
+        // next tick doesn't clobber the cycled selection.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
+        let mtime = read_mtime(&path);
+
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            PanelVisibility::default(),
+        );
+        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+        app.set_cycle_names(vec!["btop".to_string(), "dracula".to_string()]);
+
+        // Cycle from btop -> dracula (both embedded, neither expected to
+        // have a user-dir file on this test machine — assertion is the
+        // theme_source ended up matching reality).
+        app.cycle_theme();
+
+        // Whatever source_for_name("dracula") returned (likely None on a
+        // clean machine), theme_source must reflect that — NOT the stale
+        // /tmp/scratch.theme that was set before cycling.
+        let expected = source_for_name("dracula");
+        match (&app.theme_source, &expected) {
+            (None, None) => {} // both empty, good
+            (Some(actual), Some(want)) => assert_eq!(actual.path, want.path),
+            _ => panic!(
+                "theme_source mismatch after cycle: actual={:?} expected={:?}",
+                app.theme_source, expected
+            ),
+        }
+        // The stale /tmp/scratch.theme path MUST be gone either way.
+        if let Some(s) = &app.theme_source {
+            assert_ne!(s.path, path, "stale source path leaked through cycle");
+        }
     }
 
     #[test]

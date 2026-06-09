@@ -259,40 +259,8 @@ pub fn run() -> io::Result<()> {
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             Some(crate::app::ThemeSource { path, mtime })
         }
-        Some(name) => {
-            let user_path = config::xdg_config_dir()
-                .join("abtop")
-                .join("themes")
-                .join(format!("{name}.theme"));
-            if user_path.exists() {
-                let mtime = std::fs::metadata(&user_path)
-                    .and_then(|m| m.modified())
-                    .ok();
-                Some(crate::app::ThemeSource {
-                    path: user_path,
-                    mtime,
-                })
-            } else {
-                None
-            }
-        }
-        None => {
-            let user_path = config::xdg_config_dir()
-                .join("abtop")
-                .join("themes")
-                .join(format!("{}.theme", cfg.theme));
-            if user_path.exists() {
-                let mtime = std::fs::metadata(&user_path)
-                    .and_then(|m| m.modified())
-                    .ok();
-                Some(crate::app::ThemeSource {
-                    path: user_path,
-                    mtime,
-                })
-            } else {
-                None
-            }
-        }
+        Some(name) => crate::app::source_for_name(name),
+        None => crate::app::source_for_name(&cfg.theme),
     };
 
     let demo_mode = std::env::args().any(|a| a == "--demo");
