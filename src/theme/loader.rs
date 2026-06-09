@@ -325,6 +325,24 @@ pub fn dump_embedded(
     Ok(target)
 }
 
+/// Load a theme directly from a filesystem path. Returns the parsed Theme
+/// with `name` derived from `path.file_stem()`. Errors propagate as
+/// String messages for CLI display.
+///
+/// Use case: `--theme /tmp/scratch.theme` and similar one-shot iteration.
+/// The caller is responsible for skipping `save_theme` — this function
+/// only loads, it doesn't persist.
+pub(crate) fn load_from_path(path: &Path) -> Result<Theme, String> {
+    let body = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("custom")
+        .to_string();
+    Ok(parse_theme_body(&body, &name))
+}
+
 /// Resolve a theme by name, consulting (1) the user themes dir under
 /// `config_root`, then (2) the embedded BUILTIN table. Returns None if
 /// neither contains the name.
@@ -845,5 +863,44 @@ theme[cached_grad_end]="#616263"
                 "error should mention invalid name: {err}"
             );
         }
+    }
+
+    #[test]
+    fn load_from_path_reads_a_theme_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("scratch.theme");
+        std::fs::write(&path, r##"theme[main_bg]="#112233""##).unwrap();
+        let t = load_from_path(&path).expect("load should succeed");
+        assert_eq!(t.main_bg, Color::Rgb(0x11, 0x22, 0x33));
+    }
+
+    #[test]
+    fn load_from_path_returns_err_on_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("does-not-exist.theme");
+        let result = load_from_path(&path);
+        let err = result.expect_err("missing file must error");
+        assert!(
+            err.contains("failed to read"),
+            "error should mention read failure: {err}"
+        );
+    }
+
+    #[test]
+    fn load_from_path_uses_file_stem_as_name() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("my-scratch.theme");
+        std::fs::write(&path, "").unwrap();
+        let t = load_from_path(&path).expect("load should succeed");
+        assert_eq!(t.name, "my-scratch");
+    }
+
+    #[test]
+    fn load_from_path_handles_extension_other_than_theme() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("x.txt");
+        std::fs::write(&path, "").unwrap();
+        let t = load_from_path(&path).expect("load should succeed");
+        assert_eq!(t.name, "x");
     }
 }
