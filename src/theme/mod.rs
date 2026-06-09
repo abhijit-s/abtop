@@ -6,8 +6,8 @@ mod types;
 pub use types::{Gradient, Theme};
 
 mod loader;
-// Loader exports added incrementally:
-//   parse_theme_body  (Task 6)
+pub use loader::parse_theme_body;
+// Additional loader exports:
 //   apply_overrides   (Task 7)
 //   load_or_default   (Task 10)
 
