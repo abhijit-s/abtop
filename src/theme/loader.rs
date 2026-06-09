@@ -268,6 +268,54 @@ pub fn list_available(config_root: &Path) -> Vec<ThemeListing> {
     out
 }
 
+/// Write the embedded body of `name` to `<config_root>/abtop/themes/<name>.theme`.
+///
+/// Returns the absolute path of the written file on success.
+///
+/// Errors:
+/// - `name` contains path separators or `..` → invalid theme name.
+/// - `name` is not in `embedded::BUILTIN` → nothing to dump.
+/// - Target file exists and `force` is false → refuse.
+/// - I/O failure during mkdir or write → propagate the OS error.
+pub fn dump_embedded(
+    config_root: &Path,
+    name: &str,
+    force: bool,
+) -> Result<std::path::PathBuf, String> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(format!(
+            "invalid theme name '{name}': contains '/', '\\\\', or '..'"
+        ));
+    }
+    let body = crate::theme::embedded::lookup(name).ok_or_else(|| {
+        let available: Vec<&str> = crate::theme::embedded::BUILTIN
+            .iter()
+            .map(|(n, _)| *n)
+            .collect();
+        format!(
+            "'{name}' is not an embedded theme; nothing to dump. available: {}",
+            available.join(", ")
+        )
+    })?;
+
+    let themes_dir = config_root.join("abtop").join("themes");
+    let target = themes_dir.join(format!("{name}.theme"));
+
+    if target.exists() && !force {
+        return Err(format!(
+            "{} already exists. Re-run with --force to overwrite.",
+            target.display()
+        ));
+    }
+
+    std::fs::create_dir_all(&themes_dir)
+        .map_err(|e| format!("failed to create {}: {e}", themes_dir.display()))?;
+    std::fs::write(&target, body)
+        .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+
+    Ok(target)
+}
+
 /// Resolve a theme by name, consulting (1) the user themes dir under
 /// `config_root`, then (2) the embedded BUILTIN table. Returns None if
 /// neither contains the name.
@@ -687,5 +735,85 @@ theme[cached_grad_end]="#616263"
         let listings = list_available(&bogus);
         assert_eq!(listings.len(), 13);
         assert!(listings.iter().all(|l| l.source == Source::Builtin));
+    }
+
+    #[test]
+    fn dump_embedded_writes_new_file() {
+        let tmp = TempDir::new().unwrap();
+        let result = dump_embedded(tmp.path(), "catppuccin", false);
+        let path = result.expect("dump should succeed");
+
+        assert_eq!(
+            path,
+            tmp.path().join("abtop").join("themes").join("catppuccin.theme")
+        );
+        let body = std::fs::read_to_string(&path).unwrap();
+        let embedded = crate::theme::embedded::lookup("catppuccin")
+            .expect("catppuccin in BUILTIN");
+        assert_eq!(body, embedded);
+    }
+
+    #[test]
+    fn dump_embedded_refuses_existing_without_force() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        let target = themes_dir.join("catppuccin.theme");
+        std::fs::write(&target, "existing content").unwrap();
+
+        let result = dump_embedded(tmp.path(), "catppuccin", false);
+        let err = result.expect_err("should refuse to overwrite without --force");
+        assert!(
+            err.contains("already exists"),
+            "error message should mention exists: {err}"
+        );
+        assert!(
+            err.contains("--force"),
+            "error message should suggest --force: {err}"
+        );
+
+        let body = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(body, "existing content");
+    }
+
+    #[test]
+    fn dump_embedded_overwrites_with_force() {
+        let tmp = TempDir::new().unwrap();
+        let themes_dir = tmp.path().join("abtop").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        let target = themes_dir.join("catppuccin.theme");
+        std::fs::write(&target, "existing content").unwrap();
+
+        let result = dump_embedded(tmp.path(), "catppuccin", true);
+        result.expect("should overwrite with force");
+
+        let body = std::fs::read_to_string(&target).unwrap();
+        let embedded = crate::theme::embedded::lookup("catppuccin").unwrap();
+        assert_eq!(body, embedded);
+    }
+
+    #[test]
+    fn dump_embedded_rejects_non_embedded_name() {
+        let tmp = TempDir::new().unwrap();
+        let result = dump_embedded(tmp.path(), "not-a-real-theme", false);
+        let err = result.expect_err("non-embedded name must error");
+        assert!(
+            err.contains("not an embedded theme"),
+            "error should say not embedded: {err}"
+        );
+        assert!(!tmp.path().join("abtop").exists());
+    }
+
+    #[test]
+    fn dump_embedded_rejects_path_traversal_names() {
+        let tmp = TempDir::new().unwrap();
+        for bad in ["../evil", "..", "sub/name", "name\\back", ""] {
+            let result = dump_embedded(tmp.path(), bad, true);
+            let err = result.expect_err(&format!("'{bad}' should be rejected"));
+            assert!(
+                err.contains("invalid theme name"),
+                "error should mention invalid name: {err}"
+            );
+        }
     }
 }
