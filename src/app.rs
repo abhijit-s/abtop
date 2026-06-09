@@ -477,7 +477,10 @@ impl App {
             .position(|&n| n == self.theme.name)
             .unwrap_or(0);
         let next = (current + 1) % names.len();
-        self.theme = Theme::by_name(names[next]).unwrap_or_default();
+        let cfg = crate::config::load_config();
+        let mut new_theme = Theme::by_name(names[next]).unwrap_or_default();
+        crate::theme::apply_overrides(&mut new_theme, &cfg);
+        self.theme = new_theme;
         if let Err(e) = crate::config::save_theme(names[next]) {
             self.set_status(format!("theme: {} (save failed: {})", names[next], e));
         } else {

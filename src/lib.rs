@@ -109,7 +109,7 @@ pub fn run() -> io::Result<()> {
     let cfg = config::load_config();
 
     // --theme flag > config file > default
-    let initial_theme = std::env::args()
+    let cli_theme_name: Option<String> = std::env::args()
         .position(|a| a == "--theme")
         .map(|pos| {
             let val = std::env::args().nth(pos + 1);
@@ -126,18 +126,22 @@ pub fn run() -> io::Result<()> {
                     std::process::exit(1);
                 }
             }
-        })
-        .map(|name| {
-            theme::Theme::by_name(&name).unwrap_or_else(|| {
-                eprintln!(
-                    "unknown theme '{}'. available: {}",
-                    name,
-                    theme::THEME_NAMES.join(", ")
-                );
-                std::process::exit(1);
-            })
-        })
-        .or_else(|| theme::Theme::by_name(&cfg.theme));
+        });
+
+    // Validate CLI --theme exists in user dir or embedded; hard-fail if not.
+    if let Some(name) = &cli_theme_name {
+        if theme::Theme::by_name(name).is_none() {
+            eprintln!(
+                "unknown theme '{}'. available: {}",
+                name,
+                theme::THEME_NAMES.join(", ")
+            );
+            std::process::exit(1);
+        }
+    }
+
+    let resolved_name = cli_theme_name.unwrap_or_else(|| cfg.theme.clone());
+    let initial_theme: theme::Theme = theme::load_or_default(&resolved_name, &cfg);
 
     let demo_mode = std::env::args().any(|a| a == "--demo");
     let exit_on_jump = std::env::args().any(|a| a == "--exit-on-jump");
@@ -147,7 +151,7 @@ pub fn run() -> io::Result<()> {
     // manual check of the web snapshot API; the web tool uses the library
     // `App::to_snapshot` directly rather than shelling out to this.
     if std::env::args().any(|a| a == "--json") {
-        let mut app = build_app(initial_theme.unwrap_or_default(), &cfg);
+        let mut app = build_app(initial_theme.clone(), &cfg);
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -167,7 +171,7 @@ pub fn run() -> io::Result<()> {
 
     // --once flag: print snapshot and exit
     if std::env::args().any(|a| a == "--once") {
-        let mut app = build_app(initial_theme.unwrap_or_default(), &cfg);
+        let mut app = build_app(initial_theme.clone(), &cfg);
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -214,14 +218,14 @@ pub fn run() -> io::Result<()> {
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     demo_mode: bool,
-    initial_theme: Option<theme::Theme>,
+    initial_theme: theme::Theme,
     exit_on_jump: bool,
     hidden_agents: &[String],
     panels: config::PanelVisibility,
     claude_config_dirs: &[std::path::PathBuf],
 ) -> io::Result<()> {
     let mut app = App::new_with_config_and_claude_dirs(
-        initial_theme.unwrap_or_default(),
+        initial_theme,
         hidden_agents,
         panels,
         claude_config_dirs,
