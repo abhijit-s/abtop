@@ -50,6 +50,55 @@ fn parse_hex(raw: &str) -> Option<Color> {
     }
 }
 
+/// Is `key` one of the 33 keys handled by `apply_kv`? Used by
+/// `classify_line` to distinguish a typo'd-key error from an
+/// unknown-but-intentional forward-compat key.
+fn is_known_key(key: &str) -> bool {
+    matches!(
+        key,
+        "main_bg" | "main_fg" | "title" | "hi_fg" | "selected_bg" | "selected_fg"
+        | "inactive_fg" | "graph_text" | "meter_bg" | "proc_misc" | "div_line"
+        | "session_id" | "status_fg" | "warning_fg" | "cpu_box" | "mem_box"
+        | "net_box" | "proc_box"
+        | "cpu_grad_start" | "cpu_grad_mid" | "cpu_grad_end"
+        | "proc_grad_start" | "proc_grad_mid" | "proc_grad_end"
+        | "used_grad_start" | "used_grad_mid" | "used_grad_end"
+        | "free_grad_start" | "free_grad_mid" | "free_grad_end"
+        | "cached_grad_start" | "cached_grad_mid" | "cached_grad_end"
+    )
+}
+
+/// Tokenize a `theme[key]="value"` line into `(key, value)` or return
+/// the specific reason it failed. Caller is responsible for skipping
+/// non-theme-prefixed lines (comments, blanks) before calling.
+fn classify_line(line: &str) -> Result<(&str, &str), ParseErrorReason> {
+    let rest = line
+        .strip_prefix("theme[")
+        .ok_or(ParseErrorReason::Malformed)?;
+    let (key, rest) = rest.split_once(']').ok_or(ParseErrorReason::Malformed)?;
+    let val_part = rest
+        .trim_start()
+        .strip_prefix('=')
+        .ok_or(ParseErrorReason::Malformed)?
+        .trim_start();
+    let value = val_part
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| {
+            val_part
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+        })
+        .ok_or(ParseErrorReason::Malformed)?;
+    if !is_known_key(key) {
+        return Err(ParseErrorReason::UnknownKey(key.to_string()));
+    }
+    if !value.is_empty() && parse_hex(value).is_none() {
+        return Err(ParseErrorReason::InvalidHex(value.to_string()));
+    }
+    Ok((key, value))
+}
+
 /// A single line of `theme[key]="value"` form, with leading/trailing
 /// whitespace tolerated. Returns (key, value) or None.
 fn parse_line(line: &str) -> Option<(&str, &str)> {
@@ -945,5 +994,69 @@ theme[cached_grad_end]="#616263"
         );
         let _ = format!("{e:?}");
         let _ = e.clone();
+    }
+
+    #[test]
+    fn is_known_key_matches_all_33_keys() {
+        let known = [
+            "main_bg", "main_fg", "title", "hi_fg", "selected_bg", "selected_fg",
+            "inactive_fg", "graph_text", "meter_bg", "proc_misc", "div_line",
+            "session_id", "status_fg", "warning_fg", "cpu_box", "mem_box",
+            "net_box", "proc_box",
+            "cpu_grad_start", "cpu_grad_mid", "cpu_grad_end",
+            "proc_grad_start", "proc_grad_mid", "proc_grad_end",
+            "used_grad_start", "used_grad_mid", "used_grad_end",
+            "free_grad_start", "free_grad_mid", "free_grad_end",
+            "cached_grad_start", "cached_grad_mid", "cached_grad_end",
+        ];
+        assert_eq!(known.len(), 33);
+        for k in known {
+            assert!(is_known_key(k), "{k} should be a known key");
+        }
+        assert!(!is_known_key("wrong_key"));
+        assert!(!is_known_key(""));
+        assert!(!is_known_key("main_bg2"));
+    }
+
+    #[test]
+    fn classify_line_returns_key_and_value_on_valid_input() {
+        let result = classify_line("theme[main_bg]=\"#112233\"");
+        assert_eq!(result, Ok(("main_bg", "#112233")));
+    }
+
+    #[test]
+    fn classify_line_accepts_empty_value() {
+        let result = classify_line("theme[main_bg]=\"\"");
+        assert_eq!(result, Ok(("main_bg", "")));
+    }
+
+    #[test]
+    fn classify_line_reports_malformed_when_no_equals() {
+        let result = classify_line("theme[main_bg]");
+        assert_eq!(result, Err(ParseErrorReason::Malformed));
+    }
+
+    #[test]
+    fn classify_line_reports_malformed_when_unquoted_value() {
+        let result = classify_line("theme[main_bg]=missing_quotes");
+        assert_eq!(result, Err(ParseErrorReason::Malformed));
+    }
+
+    #[test]
+    fn classify_line_reports_unknown_key() {
+        let result = classify_line("theme[wrong_key]=\"#fff\"");
+        assert_eq!(
+            result,
+            Err(ParseErrorReason::UnknownKey("wrong_key".to_string()))
+        );
+    }
+
+    #[test]
+    fn classify_line_reports_invalid_hex() {
+        let result = classify_line("theme[main_bg]=\"not-a-color\"");
+        assert_eq!(
+            result,
+            Err(ParseErrorReason::InvalidHex("not-a-color".to_string()))
+        );
     }
 }
