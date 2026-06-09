@@ -52,6 +52,7 @@ abtop --once             # Print snapshot and exit
 abtop --json             # Print one JSON snapshot and exit (for scripts/tools)
 abtop --setup            # Install rate limit collection hook
 abtop --theme dracula    # Launch with a specific theme
+abtop --theme /tmp/x.theme   # Or load a theme file directly (one-shot, not saved)
 ```
 
 Recommended terminal size: **120x40** or larger. Minimum 80x24 — panels hide gracefully when small.
@@ -81,6 +82,17 @@ Available: `btop`, `dracula`, `catppuccin`, `catppuccin-transparent`,
 `catppuccin-transparent` is identical to `catppuccin` but with `main_bg`
 empty so the terminal background shows through — equivalent to setting
 `theme_background = false` (below) without editing config.
+
+You can also pass a direct file path to `--theme` instead of a name:
+
+```sh
+abtop --theme /tmp/scratch.theme
+abtop --theme ./relative.theme
+abtop --theme ~/foo.theme
+```
+
+`--theme <path>` is detected when the argument contains `/`, `\`, or starts
+with `~`. Path-loaded themes are one-shot — `config.toml` is not modified.
 
 ### Custom themes
 
