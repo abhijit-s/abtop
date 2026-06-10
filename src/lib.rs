@@ -59,6 +59,7 @@ pub mod events;
 pub mod host_info;
 pub mod locale;
 pub mod model;
+pub mod plugins;
 pub mod setup;
 pub mod snapshot;
 pub mod theme;
