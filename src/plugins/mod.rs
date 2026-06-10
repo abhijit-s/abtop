@@ -28,24 +28,34 @@ pub struct PluginsConfig {
     pub notifier: notifier::NotifierConfig,
 }
 
+/// Result of [`PluginsConfig::build_registry`] — the registry itself
+/// plus the shared handles the hot-reload path needs to mutate
+/// running plugins without restarting them.
+#[derive(Default)]
+pub struct BuiltRegistry {
+    pub registry: PluginRegistry,
+    /// Shared notifier config (`Arc<RwLock<NotifierConfig>>`) when the
+    /// notifier was started; `None` otherwise.
+    #[cfg(feature = "plugin-notifier")]
+    pub notifier_shared: Option<notifier::SharedNotifierConfig>,
+}
+
 impl PluginsConfig {
     /// Build a registry from this config + an events socket path.
     /// Spawns one worker per enabled plugin. Plugins that are
     /// disabled-at-startup are NOT spawned at all (no idle thread).
     #[allow(unused_variables, unused_mut)]
-    pub fn build_registry(&self, socket_path: PathBuf) -> PluginRegistry {
-        let mut registry = PluginRegistry::new();
+    pub fn build_registry(&self, socket_path: PathBuf) -> BuiltRegistry {
+        let mut built = BuiltRegistry::default();
         #[cfg(feature = "plugin-notifier")]
         {
             if self.notifier.enabled_at_startup {
-                registry.start(
-                    notifier::Notifier::new(self.notifier.clone()),
-                    socket_path,
-                    true,
-                );
+                let plugin = notifier::Notifier::new(self.notifier.clone());
+                built.notifier_shared = Some(plugin.shared());
+                built.registry.start(plugin, socket_path, true);
             }
         }
-        registry
+        built
     }
 }
 
@@ -117,6 +127,18 @@ impl PluginRegistry {
 
     pub fn names(&self) -> Vec<&'static str> {
         self.handles.iter().map(|h| h.name).collect()
+    }
+
+    /// Snapshot the registry's per-plugin enabled flags as a control
+    /// surface for [`App::apply_event_config`]. Cloning each
+    /// `Arc<AtomicBool>` is cheap and lets the App toggle plugins at
+    /// runtime without owning the full registry (which still owns the
+    /// JoinHandles for shutdown).
+    pub fn control_handles(&self) -> Vec<(&'static str, Arc<AtomicBool>)> {
+        self.handles
+            .iter()
+            .map(|h| (h.name, Arc::clone(&h.enabled)))
+            .collect()
     }
 
     /// Signal shutdown to all started plugins and join their threads.

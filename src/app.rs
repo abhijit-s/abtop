@@ -1,4 +1,5 @@
 use crate::collector::{read_rate_limits, McpServer, MultiCollector};
+use crate::event_config::LoadedConfig;
 use crate::events::{EventDifferState, EventPublisher};
 use crate::host_info::{AgentAggregate, HostMetrics, HostSampler};
 use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
@@ -6,6 +7,7 @@ use crate::snapshot::Snapshot;
 use crate::theme::Theme;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -201,6 +203,19 @@ pub struct App {
     /// ticks; reset on publisher disabled→enabled transitions to
     /// suppress backlog.
     differ_state: EventDifferState,
+    /// External-config snapshot from the most recent successful load.
+    /// `None` means `--no-config` was passed (hot reload is disabled).
+    event_config: Option<LoadedConfig>,
+    /// Per-plugin enabled flags, copied from
+    /// [`crate::plugins::PluginRegistry::control_handles`]. Used by
+    /// [`apply_event_config`] to toggle plugins live without owning
+    /// the registry. Empty when no plugins were started.
+    plugin_enabled: Vec<(&'static str, Arc<AtomicBool>)>,
+    /// Shared notifier-config handle so hot-reload can swap rules /
+    /// debounce / backend without restarting the worker. `None` when
+    /// the notifier was not started.
+    #[cfg(feature = "plugin-notifier")]
+    notifier_shared: Option<crate::plugins::notifier::SharedNotifierConfig>,
 }
 
 impl App {
@@ -272,7 +287,118 @@ impl App {
             publisher: EventPublisher::disabled(),
             prev_snapshot: None,
             differ_state: EventDifferState::default(),
+            event_config: None,
+            plugin_enabled: Vec::new(),
+            #[cfg(feature = "plugin-notifier")]
+            notifier_shared: None,
         }
+    }
+
+    /// Install the initial external-config snapshot loaded from
+    /// `~/.config/abtop/config.toml` (+ drop-ins). Subsequent calls to
+    /// [`App::check_for_event_config_reload`] poll `mtime` on the
+    /// source paths and re-apply when files change.
+    pub fn set_event_config(&mut self, cfg: crate::event_config::LoadedConfig) {
+        self.event_config = Some(cfg);
+    }
+
+    /// Install plugin control handles so hot reload can flip the
+    /// per-plugin enabled flag without owning the full registry.
+    pub fn set_plugin_handles(&mut self, handles: Vec<(&'static str, Arc<AtomicBool>)>) {
+        self.plugin_enabled = handles;
+    }
+
+    /// Install the shared notifier config so the loader can mutate
+    /// rules / debounce / backend in place.
+    #[cfg(feature = "plugin-notifier")]
+    pub fn set_notifier_shared(&mut self, shared: crate::plugins::notifier::SharedNotifierConfig) {
+        self.notifier_shared = Some(shared);
+    }
+
+    /// Apply a fresh [`LoadedConfig`] to the live publisher, plugin
+    /// registry, and shared notifier config. Compares scalar fields
+    /// against the previously-applied config and surfaces a status
+    /// message for fields that need restart to take effect.
+    fn apply_event_config(&mut self, next: &crate::event_config::LoadedConfig) {
+        // Snapshot the relevant prev-fields up front so we don't carry
+        // an immutable borrow of `self` across calls to `set_status`.
+        let prev_events_enabled = self
+            .event_config
+            .as_ref()
+            .map(|p| p.events.enabled)
+            .unwrap_or(false);
+        let prev_socket = self
+            .event_config
+            .as_ref()
+            .and_then(|p| p.resolved_socket.clone());
+        let prev_backlog = self.event_config.as_ref().map(|p| p.events.backlog);
+        #[cfg(feature = "plugin-notifier")]
+        let prev_notifier_enabled = self
+            .event_config
+            .as_ref()
+            .map(|p| p.plugins.notifier.enabled_at_startup)
+            .unwrap_or(false);
+
+        // [events] enabled flip → publisher pause flag
+        if next.events.enabled != prev_events_enabled && self.publisher.is_enabled() {
+            self.publisher.set_paused(!next.events.enabled);
+        }
+
+        // [events] socket / backlog changes require restart in v1.
+        if prev_socket.is_some() && prev_socket != next.resolved_socket {
+            self.set_status("restart required to apply [events] socket".into());
+        }
+        if let Some(b) = prev_backlog {
+            if b != next.events.backlog {
+                self.set_status("restart required to apply [events] backlog".into());
+            }
+        }
+
+        // [plugins.notifier] enabled flip → registry pause flag.
+        #[cfg(feature = "plugin-notifier")]
+        {
+            let next_notifier_enabled = next.plugins.notifier.enabled_at_startup;
+            if next_notifier_enabled != prev_notifier_enabled {
+                for (name, flag) in &self.plugin_enabled {
+                    if *name == "notifier" {
+                        flag.store(next_notifier_enabled, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+
+            // Rules / debounce / backend hot-swap via the shared handle.
+            if let Some(shared) = self.notifier_shared.as_ref() {
+                if let Ok(mut cfg) = shared.write() {
+                    cfg.rule = next.plugins.notifier.rule.clone();
+                    cfg.debounce_ms = next.plugins.notifier.debounce_ms;
+                    cfg.backend = next.plugins.notifier.backend.clone();
+                    cfg.enabled_at_startup = next.plugins.notifier.enabled_at_startup;
+                    cfg.generation = cfg.generation.wrapping_add(1);
+                }
+            }
+        }
+    }
+
+    /// Re-read the external config file(s) and apply if mtime advanced.
+    /// Mirrors [`App::check_for_theme_reload`] in cadence and shape.
+    fn check_for_event_config_reload(&mut self) {
+        let Some(prev) = self.event_config.as_ref() else {
+            return;
+        };
+        let Some((next, errors)) = crate::event_config::reload_if_changed(prev) else {
+            return;
+        };
+        if !errors.is_empty() {
+            self.set_status(format!("config: {} parse error(s)", errors.len()));
+            // Keep the previous (good) config; don't apply partial
+            // changes from a broken file.
+            return;
+        }
+        // Set the success status first so any "restart required"
+        // hints emitted by apply_event_config can overwrite it.
+        self.set_status("config reloaded".into());
+        self.apply_event_config(&next);
+        self.event_config = Some(next);
     }
 
     /// Replace the events publisher. Resets the diff baseline so the
@@ -699,6 +825,7 @@ impl App {
         self.tick_no_summaries();
         self.drain_and_retry_summaries();
         self.check_for_theme_reload();
+        self.check_for_event_config_reload();
         self.emit_events();
     }
 
@@ -1702,6 +1829,117 @@ mod theme_source_tests {
         assert!(
             status.contains("parse error"),
             "status should mention parse error, got: {status:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod event_config_reload_tests {
+    use super::*;
+    use crate::config::PanelVisibility;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    fn make_app() -> App {
+        App::new_with_config(Theme::default(), &[], PanelVisibility::default())
+    }
+
+    fn write(path: &std::path::Path, body: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn no_event_config_is_noop() {
+        // Without a LoadedConfig installed, the reload hook returns
+        // immediately and never panics.
+        let mut app = make_app();
+        app.check_for_event_config_reload();
+        assert!(app.event_config.is_none());
+    }
+
+    #[test]
+    fn malformed_file_keeps_prior_config_and_status_warns() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("c.toml");
+        write(&path, "[events]\nenabled = true\nbacklog = 128\n");
+        let (loaded, _) = crate::event_config::load_initial(Some(&path), false);
+        let mut app = make_app();
+        app.set_event_config(loaded);
+
+        // Replace with invalid TOML; mtime must advance.
+        std::thread::sleep(Duration::from_millis(1100));
+        write(&path, "this is = not = valid\n[broken");
+
+        app.check_for_event_config_reload();
+
+        // Prior config still installed.
+        let cfg = app.event_config.as_ref().unwrap();
+        assert!(cfg.events.enabled);
+        assert_eq!(cfg.events.backlog, 128);
+        let status = app
+            .status_msg
+            .as_ref()
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("");
+        assert!(
+            status.contains("parse error"),
+            "expected parse error status, got: {status:?}"
+        );
+    }
+
+    #[test]
+    fn restart_required_status_when_backlog_changes() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("c.toml");
+        write(&path, "[events]\nbacklog = 128\n");
+        let (loaded, _) = crate::event_config::load_initial(Some(&path), false);
+        let mut app = make_app();
+        app.set_event_config(loaded);
+
+        std::thread::sleep(Duration::from_millis(1100));
+        write(&path, "[events]\nbacklog = 999\n");
+        app.check_for_event_config_reload();
+
+        let status = app
+            .status_msg
+            .as_ref()
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("");
+        // Either "config reloaded" lands first then "restart required"
+        // overwrites it, or vice versa. The reload sets the latter
+        // last, so it should win.
+        assert!(
+            status.contains("restart required") || status.contains("backlog"),
+            "expected restart-required hint, got: {status:?}"
+        );
+    }
+
+    #[cfg(all(unix, feature = "plugin-notifier"))]
+    #[test]
+    fn enabled_flip_pauses_publisher() {
+        use crate::events::EventPublisher;
+        let dir = TempDir::new().unwrap();
+        let sock = dir.path().join("ev.sock");
+        let publisher = EventPublisher::bind_uds(&sock).expect("bind publisher");
+
+        let path = dir.path().join("c.toml");
+        write(&path, "[events]\nenabled = true\n");
+        let (loaded, _) = crate::event_config::load_initial(Some(&path), false);
+        let mut app = make_app();
+        app.set_publisher(publisher);
+        app.set_event_config(loaded);
+        assert!(!app.publisher().is_paused());
+
+        std::thread::sleep(Duration::from_millis(1100));
+        write(&path, "[events]\nenabled = false\n");
+        app.check_for_event_config_reload();
+
+        assert!(
+            app.publisher().is_paused(),
+            "enabled=false should pause publisher"
         );
     }
 }

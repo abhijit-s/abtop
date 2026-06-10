@@ -144,6 +144,7 @@ fn set_parse_error_status(app: &mut App, errors: &[theme::ParseError]) {
 ///   exclusive; the later flag in argv wins.
 /// - `--print-socket-path` short-circuits the binary before the
 ///   event publisher binds anywhere.
+/// - `--config <path>` and `--no-config` are mutually exclusive.
 #[derive(Debug, Default)]
 struct EventsCliFlags {
     enable: bool,
@@ -157,6 +158,12 @@ struct EventsCliFlags {
     /// config file). Tracked here so future config-loader code can
     /// honor the CLI override.
     no_plugin_notify: bool,
+    /// `--config <path>` → load the given file as the main config and
+    /// skip the `plugins.d/` drop-in directory.
+    config_path: Option<String>,
+    /// `--no-config` → skip both the main file and drop-ins; use
+    /// defaults only.
+    skip_config: bool,
 }
 
 fn parse_events_cli_flags() -> EventsCliFlags {
@@ -183,6 +190,12 @@ fn parse_events_cli_flags() -> EventsCliFlags {
             out.plugin_notify = true;
         } else if a == "--no-plugin-notify" {
             out.no_plugin_notify = true;
+        } else if a == "--config" {
+            if let Some(v) = args.get(i + 1) {
+                out.config_path = Some(v.clone());
+            }
+        } else if a == "--no-config" {
+            out.skip_config = true;
         }
         i += 1;
     }
@@ -380,34 +393,75 @@ pub fn run() -> io::Result<()> {
         return Ok(());
     }
 
-    // Build the events publisher per CLI flags. Force-off wins over
-    // any --events* flag. On bind failure we surface the error to
-    // stderr and continue with a disabled publisher — events being
-    // unavailable should never block the TUI from starting.
-    let publisher: std::sync::Arc<events::EventPublisher> =
-        if events_flags.force_off || !events_flags.enable {
-            events::EventPublisher::disabled()
-        } else {
-            let resolved = events::socket_path::resolve(events_flags.socket_override.as_deref());
-            match events::EventPublisher::bind_uds(&resolved) {
-                Ok(p) => {
-                    println!("abtop events: listening on {}", resolved.display());
-                    p
-                }
-                Err(e) => {
-                    eprintln!(
-                        "abtop events: bind failed ({}); continuing with events off",
-                        e
-                    );
-                    events::EventPublisher::disabled()
-                }
-            }
-        };
+    // --config and --no-config are mutually exclusive.
+    if events_flags.config_path.is_some() && events_flags.skip_config {
+        eprintln!("--config and --no-config are mutually exclusive");
+        std::process::exit(1);
+    }
 
-    // Build the plugin registry. Strict mode: --plugin-notify requires
-    // an enabled publisher. --no-plugin-notify wins over --plugin-notify
-    // if both appear (explicit-off beats explicit-on).
-    let plugins_registry = build_plugins_registry(&events_flags, &publisher);
+    // Load the external TOML config (events + plugins).
+    let cli_cfg_path = events_flags
+        .config_path
+        .as_deref()
+        .map(std::path::Path::new);
+    let (loaded_event_config, event_config_errors) =
+        event_config::load_initial(cli_cfg_path, events_flags.skip_config);
+    if !event_config_errors.is_empty() {
+        for e in &event_config_errors {
+            eprintln!("config: {}: {}", e.path.display(), e.message);
+        }
+    }
+
+    // Resolve effective publisher state per the spec's precedence
+    // chain (defaults → file → ABTOP_EVENTS_SOCKET → CLI flags). CLI
+    // always wins.
+    let events_enabled_effective = if events_flags.force_off {
+        false
+    } else if events_flags.enable {
+        true
+    } else {
+        loaded_event_config.events.enabled
+    };
+
+    // Socket resolution: CLI override > env var > file > resolver default.
+    let socket_override_effective: Option<String> = events_flags
+        .socket_override
+        .clone()
+        .or_else(|| std::env::var("ABTOP_EVENTS_SOCKET").ok())
+        .or_else(|| {
+            loaded_event_config
+                .resolved_socket
+                .as_ref()
+                .map(|p| p.display().to_string())
+        });
+
+    // Build the events publisher.
+    let publisher: std::sync::Arc<events::EventPublisher> = if !events_enabled_effective {
+        events::EventPublisher::disabled()
+    } else {
+        let resolved = events::socket_path::resolve(socket_override_effective.as_deref());
+        match events::EventPublisher::bind_uds(&resolved) {
+            Ok(p) => {
+                println!("abtop events: listening on {}", resolved.display());
+                p
+            }
+            Err(e) => {
+                eprintln!(
+                    "abtop events: bind failed ({}); continuing with events off",
+                    e
+                );
+                events::EventPublisher::disabled()
+            }
+        }
+    };
+
+    // Build the plugin registry. Strict mode: any plugin marked
+    // enabled requires the publisher to be live; otherwise we refuse
+    // to start it and write a clear stderr line.
+    let built_plugins = build_plugins_registry(&events_flags, &publisher, &loaded_event_config);
+    let plugin_handles = built_plugins.registry.control_handles();
+    #[cfg(feature = "plugin-notifier")]
+    let notifier_shared = built_plugins.notifier_shared.clone();
 
     // Setup terminal
     enable_raw_mode()?;
@@ -426,12 +480,16 @@ pub fn run() -> io::Result<()> {
         &parse_errors,
         theme_source.clone(),
         publisher,
+        loaded_event_config,
+        plugin_handles,
+        #[cfg(feature = "plugin-notifier")]
+        notifier_shared,
     );
 
     // Stop plugin workers before tearing down the terminal so any
     // last-second stderr they emit lands on the user's actual stderr,
     // not on the alternate screen.
-    plugins_registry.shutdown();
+    built_plugins.registry.shutdown();
 
     // Always attempt both cleanup steps regardless of app result
     let r1 = stdout().execute(DisableMouseCapture).map(|_| ());
@@ -442,16 +500,40 @@ pub fn run() -> io::Result<()> {
     app_result.and(r1).and(r2).and(r3)
 }
 
-/// Build the plugin registry from CLI flags + the resolved publisher.
-/// Strict mode: if `--plugin-notify` is set but the publisher ended
-/// up disabled, we refuse to spawn the worker and surface a clear
-/// stderr message.
+/// Build the plugin registry from CLI flags + the loaded external
+/// config + the resolved publisher. Strict mode: any plugin marked
+/// `enabled` (in the file or via CLI) requires a live publisher;
+/// otherwise we refuse to spawn it and surface a clear stderr line.
+///
+/// Precedence (CLI > file): `--no-plugin-notify` force-disables; a
+/// bare `--plugin-notify` force-enables; absent both, the file's
+/// `[plugins.notifier] enabled` wins.
 fn build_plugins_registry(
     flags: &EventsCliFlags,
     publisher: &std::sync::Arc<events::EventPublisher>,
-) -> plugins::PluginRegistry {
-    // Resolve user intent: explicit --no-plugin-notify wins.
-    let want_notifier = flags.plugin_notify && !flags.no_plugin_notify;
+    loaded: &event_config::LoadedConfig,
+) -> plugins::BuiltRegistry {
+    // Resolve the notifier's effective enable flag per the precedence
+    // chain. CLI flags always win; the file is the persistent default.
+    let file_notifier_enabled = {
+        #[cfg(feature = "plugin-notifier")]
+        {
+            loaded.plugins.notifier.enabled_at_startup
+        }
+        #[cfg(not(feature = "plugin-notifier"))]
+        {
+            let _ = loaded;
+            false
+        }
+    };
+    let want_notifier = if flags.no_plugin_notify {
+        false
+    } else if flags.plugin_notify {
+        true
+    } else {
+        file_notifier_enabled
+    };
+
     let socket_path = match publisher.socket_path() {
         Some(p) => p.to_path_buf(),
         None => {
@@ -460,19 +542,17 @@ fn build_plugins_registry(
                     "notifier: events publisher is disabled — start with --events to enable plugins"
                 );
             }
-            return plugins::PluginRegistry::new();
+            return plugins::BuiltRegistry::default();
         }
     };
     #[allow(unused_mut)]
     let mut cfg = plugins::PluginsConfig::default();
     #[cfg(feature = "plugin-notifier")]
     {
+        // Start from the file's parsed notifier config (rules,
+        // debounce, backend) and apply the CLI-resolved enable flag.
+        cfg.notifier = loaded.plugins.notifier.clone();
         cfg.notifier.enabled_at_startup = want_notifier;
-        // U6 ships with an empty rule list — the user has no way to
-        // configure rules until the TOML loader lands in U7. The
-        // worker still connects and consumes events; it just has
-        // nothing to dispatch.
-        // TODO(u7-config): load `[plugins.notifier]` from abtop.toml.
     }
     #[cfg(not(feature = "plugin-notifier"))]
     {
@@ -495,6 +575,11 @@ fn run_app(
     parse_errors: &[theme::ParseError],
     theme_source: Option<crate::app::ThemeSource>,
     publisher: std::sync::Arc<events::EventPublisher>,
+    event_config: event_config::LoadedConfig,
+    plugin_handles: Vec<(&'static str, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    #[cfg(feature = "plugin-notifier")] notifier_shared: Option<
+        crate::plugins::notifier::SharedNotifierConfig,
+    >,
 ) -> io::Result<()> {
     let mut app = App::new_with_config_and_claude_dirs(
         initial_theme,
@@ -505,6 +590,12 @@ fn run_app(
     set_parse_error_status(&mut app, parse_errors);
     app.set_theme_source(theme_source);
     app.set_publisher(publisher);
+    app.set_event_config(event_config);
+    app.set_plugin_handles(plugin_handles);
+    #[cfg(feature = "plugin-notifier")]
+    if let Some(shared) = notifier_shared {
+        app.set_notifier_shared(shared);
+    }
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
@@ -861,6 +952,12 @@ mod events_cli_tests {
                 out.plugin_notify = true;
             } else if a == "--no-plugin-notify" {
                 out.no_plugin_notify = true;
+            } else if a == "--config" {
+                if let Some(v) = argv.get(i + 1) {
+                    out.config_path = Some((*v).to_string());
+                }
+            } else if a == "--no-config" {
+                out.skip_config = true;
             }
             i += 1;
         }
