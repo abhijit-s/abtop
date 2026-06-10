@@ -88,6 +88,23 @@ impl EventPublisher {
         crate::events::socket_path::validate_sun_path_length(path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
+        // Refuse any path that still contains an unresolved `${...}`
+        // placeholder. Catches typos in unknown variable names (e.g.
+        // `${XGD_RUNTIME_DIR}`) so we don't end up creating literal
+        // `${...}` directories at the `create_dir_all` call below.
+        if let Some(s) = path.to_str() {
+            if s.contains("${") {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "socket path contains unresolved placeholder: {} \
+                         (check `[events] socket` in your config)",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+
         if path.exists() {
             // Probe — if a live listener is on the other end, refuse.
             // Otherwise unlink and rebind.
@@ -526,6 +543,30 @@ mod tests {
         assert_eq!(pub_.conn_count(), 0);
         assert_eq!(pub_.dropped_total(), 0);
         assert!(pub_.socket_path().is_none());
+    }
+
+    #[test]
+    fn bind_refuses_path_with_unresolved_placeholder() {
+        // Safety net: even if interpolation lets an unknown var slip
+        // through verbatim (typo, forward-rolled config, etc.), bind
+        // must refuse it rather than creating a literal `${...}`
+        // directory on disk via `create_dir_all`.
+        let dir = std::env::temp_dir().join("abtop_test_${UNRESOLVED}");
+        let path = dir.join("abtop.sock");
+        match EventPublisher::bind_uds(&path) {
+            Ok(_) => panic!("bind must refuse paths containing ${{...}}"),
+            Err(err) => {
+                assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+                assert!(
+                    err.to_string().contains("unresolved placeholder"),
+                    "error message should explain the problem, got: {err}"
+                );
+            }
+        }
+        assert!(
+            !dir.exists(),
+            "no literal-named directory should have been created"
+        );
     }
 
     #[test]

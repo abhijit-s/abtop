@@ -289,12 +289,16 @@ fn merge_overlay(base: &mut ConfigFile, next: ConfigFile) {
 }
 
 fn apply_to_loaded(loaded: &mut LoadedConfig, cf: ConfigFile) {
-    // Interpolate the socket field if set.
+    // Interpolate the socket field if set. `expand` returns `None` when
+    // a documented-known variable (e.g. `XDG_RUNTIME_DIR` on macOS) is
+    // unset/empty — treat that as "no override" so the downstream
+    // resolver picks the platform default rather than binding to a
+    // literal `${...}` path.
     let resolved_socket = cf
         .events
         .socket
         .as_deref()
-        .map(|raw| PathBuf::from(interpolation::expand(raw)));
+        .and_then(|raw| interpolation::expand(raw).map(PathBuf::from));
 
     loaded.resolved_socket = resolved_socket;
     loaded.events = cf.events;

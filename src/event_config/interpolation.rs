@@ -1,20 +1,41 @@
 //! Variable interpolation used by the `[events]` section of the config
-//! file. Currently supports `${UID}`, `${XDG_RUNTIME_DIR}`, and a
-//! leading `~` (home-relative path) — enough to make the default
-//! `socket = "${XDG_RUNTIME_DIR}/abtop.sock"` work on Linux and the
-//! `/tmp/abtop.${UID}.sock` form work on macOS.
+//! file. Supports `${UID}`, `${XDG_RUNTIME_DIR}`, `${XDG_CONFIG_HOME}`,
+//! `${TMPDIR}`, `${HOME}`, and a leading `~` (home-relative path).
 //!
-//! Unknown variables are left verbatim so a forward-rolled config that
-//! references a placeholder this version doesn't understand won't
-//! silently collapse to garbage — the user sees the literal text and
-//! can debug.
+//! Fall-through semantics:
+//! - **Known variable, unset or empty** → returns `None`. The caller
+//!   drops the override and falls back to platform-default resolution.
+//!   This prevents disasters like `socket = "${XDG_RUNTIME_DIR}/abtop.sock"`
+//!   binding to a literal `${XDG_RUNTIME_DIR}/` directory in the cwd
+//!   on macOS, where the variable isn't set.
+//! - **Unknown variable** → left verbatim in the returned string. The
+//!   downstream bind step catches the unresolved `${...}` and refuses
+//!   to bind, surfacing a clear error rather than creating literal-named
+//!   directories on disk.
 
 use std::path::PathBuf;
 
-/// Expand `${VAR}` placeholders and a leading `~/` in `input`. The
-/// `env`, `uid`, and `home` callbacks supply the actual values so this
-/// is unit-testable without touching the process environment.
-pub fn expand_with<F, G, H>(input: &str, env: F, uid: G, home: H) -> String
+/// Names this module recognises. Unset/empty values for these trigger
+/// a `None` return so the caller knows to use platform defaults.
+const KNOWN_VARS: &[&str] = &[
+    "UID",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "TMPDIR",
+    "HOME",
+];
+
+fn is_known(name: &str) -> bool {
+    KNOWN_VARS.contains(&name)
+}
+
+/// Expand `${VAR}` placeholders and a leading `~/` in `input`.
+///
+/// Returns `Some(expanded)` on success, or `None` when a documented
+/// known variable is unset/empty (signalling "fall through to default").
+/// Unknown variables stay in the returned string verbatim — the bind
+/// step is responsible for rejecting any residual `${...}`.
+pub fn expand_with<F, G, H>(input: &str, env: F, uid: G, home: H) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
     G: Fn() -> Option<String>,
@@ -32,13 +53,18 @@ where
                     "UID" => uid(),
                     other => env(other),
                 };
-                if let Some(v) = replacement {
-                    out.push_str(&v);
-                } else {
-                    // Unknown variable — leave the placeholder verbatim
-                    // so the user can spot it instead of getting a
-                    // surprise empty path.
-                    out.push_str(&with_tilde[i..i + 3 + end]);
+                match replacement {
+                    Some(v) if !v.is_empty() => out.push_str(&v),
+                    _ => {
+                        if is_known(name) {
+                            // Documented-known but unset/empty: tell
+                            // the caller to fall through to defaults.
+                            return None;
+                        }
+                        // Unknown var: leave verbatim. Bind-time will
+                        // catch any residual `${...}`.
+                        out.push_str(&with_tilde[i..i + 3 + end]);
+                    }
                 }
                 i = i + 3 + end;
                 continue;
@@ -47,7 +73,7 @@ where
         out.push(with_tilde[i..].chars().next().unwrap());
         i += with_tilde[i..].chars().next().unwrap().len_utf8();
     }
-    out
+    Some(out)
 }
 
 fn expand_tilde<H>(input: &str, home: &H) -> String
@@ -68,13 +94,16 @@ where
 }
 
 /// Process-default expansion. Reads `${UID}` from the running process
-/// (via `libc::getuid` on unix, falling back to an empty string
-/// elsewhere) and the environment for everything else.
-pub fn expand(input: &str) -> String {
+/// (via `libc::getuid` on Linux, `id -u` on macOS) and the environment
+/// for everything else.
+///
+/// Returns `None` when a documented-known variable is unset/empty so
+/// the caller falls through to platform-default resolution.
+pub fn expand(input: &str) -> Option<String> {
     expand_with(
         input,
         |k| std::env::var(k).ok(),
-        || current_uid_string(),
+        current_uid_string,
         dirs::home_dir,
     )
 }
@@ -131,7 +160,7 @@ mod tests {
         env_pairs: &[(&str, &str)],
         uid: Option<&str>,
         home: Option<&str>,
-    ) -> String {
+    ) -> Option<String> {
         let env: std::collections::HashMap<String, String> = env_pairs
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -147,16 +176,16 @@ mod tests {
     #[test]
     fn passthrough_for_plain_strings() {
         assert_eq!(
-            run("/tmp/abtop.sock", &[], Some("1000"), Some("/h")),
-            "/tmp/abtop.sock"
+            run("/tmp/abtop.sock", &[], Some("1000"), Some("/h")).as_deref(),
+            Some("/tmp/abtop.sock")
         );
     }
 
     #[test]
     fn expands_uid() {
         assert_eq!(
-            run("/tmp/abtop.${UID}.sock", &[], Some("501"), Some("/h")),
-            "/tmp/abtop.501.sock"
+            run("/tmp/abtop.${UID}.sock", &[], Some("501"), Some("/h")).as_deref(),
+            Some("/tmp/abtop.501.sock")
         );
     }
 
@@ -168,56 +197,73 @@ mod tests {
                 &[("XDG_RUNTIME_DIR", "/run/user/501")],
                 Some("501"),
                 Some("/h"),
-            ),
-            "/run/user/501/abtop.sock"
+            )
+            .as_deref(),
+            Some("/run/user/501/abtop.sock")
         );
     }
 
     #[test]
-    fn missing_xdg_runtime_dir_yields_empty() {
-        // Per the spec: when the env var is unset, the variable expands
-        // to empty and the socket-path resolver downstream handles the
-        // fallback. Our `expand_with` returns empty when env returns
-        // None — but `expand` (used in production) returns None for
-        // an unset env var, and our placeholder rule leaves it verbatim.
-        // Use an explicit empty value to match the spec semantics.
-        assert_eq!(
-            run(
-                "${XDG_RUNTIME_DIR}/abtop.sock",
-                &[("XDG_RUNTIME_DIR", "")],
-                Some("501"),
-                Some("/h"),
-            ),
-            "/abtop.sock"
-        );
+    fn unset_known_var_returns_none() {
+        // Known var, no env entry → caller falls through to default.
+        // This is the macOS-without-XDG_RUNTIME_DIR case that previously
+        // caused a literal `${XDG_RUNTIME_DIR}` directory to be created
+        // on disk at bind time.
+        assert!(run(
+            "${XDG_RUNTIME_DIR}/abtop.sock",
+            &[],
+            Some("501"),
+            Some("/h")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn empty_known_var_also_returns_none() {
+        // Explicitly-empty env value is treated the same as unset.
+        assert!(run(
+            "${XDG_RUNTIME_DIR}/abtop.sock",
+            &[("XDG_RUNTIME_DIR", "")],
+            Some("501"),
+            Some("/h"),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn unset_uid_returns_none() {
+        // UID is treated as a known var: if `id -u` fails, fall through.
+        assert!(run("/tmp/abtop.${UID}.sock", &[], None, Some("/h")).is_none());
     }
 
     #[test]
     fn unknown_variable_left_verbatim() {
+        // Unknown vars stay literal so the bind step can refuse them
+        // (catches typos like `${XGD_RUNTIME_DIR}`).
         assert_eq!(
-            run("/tmp/${UNKNOWN}/x", &[], Some("0"), Some("/h")),
-            "/tmp/${UNKNOWN}/x"
+            run("/tmp/${UNKNOWN}/x", &[], Some("0"), Some("/h")).as_deref(),
+            Some("/tmp/${UNKNOWN}/x")
         );
     }
 
     #[test]
     fn expands_home_prefix() {
         assert_eq!(
-            run("~/sockets/abtop.sock", &[], Some("0"), Some("/users/a")),
-            "/users/a/sockets/abtop.sock"
+            run("~/sockets/abtop.sock", &[], Some("0"), Some("/users/a")).as_deref(),
+            Some("/users/a/sockets/abtop.sock")
         );
     }
 
     #[test]
     fn bare_tilde_expands() {
-        assert_eq!(run("~", &[], Some("0"), Some("/h")), "/h");
+        assert_eq!(run("~", &[], Some("0"), Some("/h")).as_deref(), Some("/h"));
     }
 
     #[test]
     fn tilde_not_at_start_left_alone() {
         assert_eq!(
-            run("/path/with~tilde", &[], Some("0"), Some("/h")),
-            "/path/with~tilde"
+            run("/path/with~tilde", &[], Some("0"), Some("/h")).as_deref(),
+            Some("/path/with~tilde")
         );
     }
 
@@ -225,8 +271,8 @@ mod tests {
     fn dangling_dollar_brace_left_alone() {
         // Pathological input: `${` with no closing `}`. We leave it.
         assert_eq!(
-            run("/tmp/${UID/x", &[], Some("501"), Some("/h")),
-            "/tmp/${UID/x"
+            run("/tmp/${UID/x", &[], Some("501"), Some("/h")).as_deref(),
+            Some("/tmp/${UID/x")
         );
     }
 }
