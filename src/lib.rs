@@ -192,8 +192,7 @@ pub fn run() -> io::Result<()> {
         if let Some(addr) = &events_flags.tcp_override {
             println!("tcp://{addr}");
         } else {
-            let resolved =
-                events::socket_path::resolve(events_flags.socket_override.as_deref());
+            let resolved = events::socket_path::resolve(events_flags.socket_override.as_deref());
             println!("{}", resolved.display());
         }
         return Ok(());
@@ -255,24 +254,22 @@ pub fn run() -> io::Result<()> {
     let cfg = config::load_config();
 
     // --theme flag > config file > default
-    let cli_theme_name: Option<String> = std::env::args()
-        .position(|a| a == "--theme")
-        .map(|pos| {
-            let val = std::env::args().nth(pos + 1);
-            match val {
-                Some(name) if !name.starts_with('-') => name,
-                Some(name) => {
-                    eprintln!("--theme requires a theme name, got '{}'", name);
-                    eprintln!("available: {}", theme::THEME_NAMES.join(", "));
-                    std::process::exit(1);
-                }
-                None => {
-                    eprintln!("--theme requires a theme name");
-                    eprintln!("available: {}", theme::THEME_NAMES.join(", "));
-                    std::process::exit(1);
-                }
+    let cli_theme_name: Option<String> = std::env::args().position(|a| a == "--theme").map(|pos| {
+        let val = std::env::args().nth(pos + 1);
+        match val {
+            Some(name) if !name.starts_with('-') => name,
+            Some(name) => {
+                eprintln!("--theme requires a theme name, got '{}'", name);
+                eprintln!("available: {}", theme::THEME_NAMES.join(", "));
+                std::process::exit(1);
             }
-        });
+            None => {
+                eprintln!("--theme requires a theme name");
+                eprintln!("available: {}", theme::THEME_NAMES.join(", "));
+                std::process::exit(1);
+            }
+        }
+    });
 
     let (initial_theme, parse_errors): (theme::Theme, Vec<theme::ParseError>) =
         match &cli_theme_name {
@@ -380,15 +377,17 @@ pub fn run() -> io::Result<()> {
         if events_flags.force_off || !events_flags.enable {
             events::EventPublisher::disabled()
         } else {
-            let resolved =
-                events::socket_path::resolve(events_flags.socket_override.as_deref());
+            let resolved = events::socket_path::resolve(events_flags.socket_override.as_deref());
             match events::EventPublisher::bind_uds(&resolved) {
                 Ok(p) => {
                     println!("abtop events: listening on {}", resolved.display());
                     p
                 }
                 Err(e) => {
-                    eprintln!("abtop events: bind failed ({}); continuing with events off", e);
+                    eprintln!(
+                        "abtop events: bind failed ({}); continuing with events off",
+                        e
+                    );
                     events::EventPublisher::disabled()
                 }
             }
@@ -473,6 +472,7 @@ fn run_app(
                             KeyCode::Char(c @ '1'..='7') => app.toggle_panel(c as u8 - b'0'),
                             KeyCode::Char('M') => app.toggle_mcp_session_suppression(),
                             KeyCode::Char('t') => app.cycle_theme(),
+                            KeyCode::Char('e') => app.toggle_events_pause(),
                             _ => {}
                         }
                     } else if app.config_open {
@@ -523,6 +523,7 @@ fn run_app(
                             KeyCode::Char('/') => app.filter_active = true,
                             KeyCode::Esc if !app.filter_text.is_empty() => app.clear_filter(),
                             KeyCode::Char('f') | KeyCode::Char('F') => app.toggle_file_audit(),
+                            KeyCode::Char('e') => app.toggle_events_pause(),
                             KeyCode::Enter if !demo_mode => match app.jump_to_session() {
                                 JumpOutcome::Jumped if exit_on_jump => app.quit(),
                                 JumpOutcome::Failed(msg) => app.set_status(msg),

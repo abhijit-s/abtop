@@ -45,6 +45,10 @@ struct Inner {
 /// across the tick thread and the accept thread.
 pub struct EventPublisher {
     enabled: AtomicBool,
+    /// Runtime pause flag. When true, `publish()` returns early without
+    /// touching the connection list — the socket stays bound and consumers
+    /// remain connected. Toggled from the TUI via the `e` key.
+    paused: AtomicBool,
     inner: Arc<Inner>,
     socket_path: Option<PathBuf>,
     /// Cumulative drop counter across ALL connections, for tests/metrics.
@@ -63,6 +67,7 @@ impl EventPublisher {
     pub fn disabled() -> Arc<Self> {
         Arc::new(Self {
             enabled: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
             inner: Arc::new(Inner::default()),
             socket_path: None,
             total_drops: AtomicU64::new(0),
@@ -124,6 +129,7 @@ impl EventPublisher {
 
         Ok(Arc::new(Self {
             enabled: AtomicBool::new(true),
+            paused: AtomicBool::new(false),
             inner,
             socket_path: Some(path.to_path_buf()),
             total_drops: AtomicU64::new(0),
@@ -150,10 +156,53 @@ impl EventPublisher {
         self.total_drops.load(Ordering::Relaxed)
     }
 
+    /// Cumulative drop counter (alias of [`drop_count`](Self::drop_count))
+    /// exposed under the name the UI uses.
+    pub fn dropped_total(&self) -> u64 {
+        self.total_drops.load(Ordering::Relaxed)
+    }
+
+    /// True when [`publish`](Self::publish) is currently suppressed via the
+    /// runtime pause flag. Always false when the publisher is disabled.
+    pub fn is_paused(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed) && self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Flip the pause flag. No-op when the publisher is disabled —
+    /// `disabled()` publishers have no socket bound, so pausing them is
+    /// meaningless. The TUI surfaces the strict-mode message instead.
+    pub fn set_paused(&self, paused: bool) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Number of currently-connected consumers. 0 when disabled.
+    /// Briefly takes the conns mutex (held only during accept + publish
+    /// broadcast, both very short) — safe to call from the UI redraw path.
+    pub fn conn_count(&self) -> usize {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return 0;
+        }
+        match self.inner.conns.lock() {
+            Ok(guard) => guard
+                .iter()
+                .filter(|c| !c.dead.load(Ordering::Relaxed))
+                .count(),
+            Err(_) => 0,
+        }
+    }
+
     /// Try to deliver each event to every currently-connected consumer.
     /// Non-blocking: drops the line for any consumer whose queue is full.
     pub fn publish(&self, events: &[AppEvent]) {
         if !self.is_enabled() || events.is_empty() {
+            return;
+        }
+        // Runtime pause: keep the socket bound and consumers connected, but
+        // skip publishing entirely. One atomic load, no allocation.
+        if self.paused.load(Ordering::Relaxed) {
             return;
         }
         let now_ms = SystemTime::now()
@@ -390,6 +439,93 @@ mod tests {
         reader.read_line(&mut line).expect("read");
         assert!(line.contains("\"type\":\"StatusChanged\""), "got: {line}");
         assert!(line.contains("\"v\":1"), "got: {line}");
+    }
+
+    #[test]
+    fn pause_blocks_publish() {
+        let path = tmp_sock_path("pause");
+        let pub_ = EventPublisher::bind_uds(&path).expect("bind");
+
+        let mut stream = None;
+        for _ in 0..50 {
+            match UnixStream::connect(&path) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(_) => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        let stream = stream.expect("connect");
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        thread::sleep(Duration::from_millis(300));
+
+        let mut reader = BufReader::new(stream);
+
+        // A: published normally.
+        let ev_a = AppEvent::StatusChanged {
+            session_id: "A".to_string(),
+            from: crate::model::SessionStatus::Thinking,
+            to: crate::model::SessionStatus::Executing,
+        };
+        pub_.publish(&[ev_a]);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read A");
+        assert!(line.contains("\"session_id\":\"A\""), "got: {line}");
+
+        // Pause and publish B — must NOT arrive.
+        assert!(!pub_.is_paused());
+        pub_.set_paused(true);
+        assert!(pub_.is_paused());
+        let ev_b = AppEvent::StatusChanged {
+            session_id: "B".to_string(),
+            from: crate::model::SessionStatus::Thinking,
+            to: crate::model::SessionStatus::Executing,
+        };
+        pub_.publish(&[ev_b]);
+
+        // Set a short read timeout so this doesn't hang indefinitely if the
+        // implementation is wrong — we EXPECT a timeout here.
+        reader
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+        let mut paused_line = String::new();
+        let read_result = reader.read_line(&mut paused_line);
+        assert!(
+            read_result.is_err() || paused_line.is_empty(),
+            "unexpected payload during pause: {paused_line:?}"
+        );
+
+        // Resume, restore a generous timeout, publish C — must arrive.
+        reader
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        pub_.set_paused(false);
+        assert!(!pub_.is_paused());
+        let ev_c = AppEvent::StatusChanged {
+            session_id: "C".to_string(),
+            from: crate::model::SessionStatus::Thinking,
+            to: crate::model::SessionStatus::Executing,
+        };
+        pub_.publish(&[ev_c]);
+        let mut resumed = String::new();
+        reader.read_line(&mut resumed).expect("read C");
+        assert!(resumed.contains("\"session_id\":\"C\""), "got: {resumed}");
+    }
+
+    #[test]
+    fn set_paused_is_noop_when_disabled() {
+        let pub_ = EventPublisher::disabled();
+        pub_.set_paused(true);
+        assert!(!pub_.is_paused(), "disabled publisher reports not-paused");
+        assert_eq!(pub_.conn_count(), 0);
+        assert_eq!(pub_.dropped_total(), 0);
+        assert!(pub_.socket_path().is_none());
     }
 
     #[test]

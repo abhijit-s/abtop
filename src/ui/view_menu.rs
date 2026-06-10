@@ -20,6 +20,8 @@ pub(crate) enum ViewState {
     On,
     Off,
     Action,
+    /// Free-form right-hand label (used by the Events row).
+    Custom(String),
 }
 
 pub(crate) fn items(app: &App) -> Vec<ViewItem> {
@@ -86,14 +88,33 @@ pub(crate) fn items(app: &App) -> Vec<ViewItem> {
             label: t("view.cycle_theme").leak(),
             state: Action,
         },
+        ViewItem {
+            key: 'e',
+            label: "Events",
+            state: events_state(app),
+        },
     ]
+}
+
+fn events_state(app: &App) -> ViewState {
+    let publisher = app.publisher();
+    if !publisher.is_enabled() {
+        return ViewState::Custom("disabled (start with --events)".to_string());
+    }
+    if publisher.is_paused() {
+        ViewState::Custom("paused".to_string())
+    } else {
+        ViewState::On
+    }
 }
 
 pub(crate) fn draw_view_overlay(f: &mut Frame, app: &App, theme: &Theme) {
     let area = f.area();
     let entries = items(app);
-    let popup_w = 44u16.min(area.width.saturating_sub(4));
-    let popup_h = (entries.len() as u16 + 4).min(area.height.saturating_sub(4));
+    let extra_detail_lines: u16 = if app.publisher().is_enabled() { 3 } else { 0 };
+    let popup_w = 60u16.min(area.width.saturating_sub(4));
+    let popup_h =
+        (entries.len() as u16 + extra_detail_lines + 4).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_w)) / 2;
     let y = (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
@@ -128,12 +149,22 @@ pub(crate) fn draw_view_overlay(f: &mut Frame, app: &App, theme: &Theme) {
     let off_str = t("view.off");
     let action_str = t("view.action");
 
-    let mut lines: Vec<Line> = Vec::with_capacity(entries.len() + 2);
+    let mut lines: Vec<Line> = Vec::with_capacity(entries.len() + 6);
     for item in &entries {
-        let (state_str, state_style) = match item.state {
+        let (state_str, state_style) = match &item.state {
             ViewState::On => (on_str.clone(), Style::default().fg(theme.proc_misc)),
             ViewState::Off => (off_str.clone(), Style::default().fg(theme.inactive_fg)),
             ViewState::Action => (action_str.clone(), Style::default().fg(theme.session_id)),
+            ViewState::Custom(label) => {
+                let style = if label == "paused" {
+                    Style::default().fg(theme.warning_fg)
+                } else if label.starts_with("disabled") {
+                    Style::default().fg(theme.inactive_fg)
+                } else {
+                    Style::default().fg(theme.proc_misc)
+                };
+                (label.clone(), style)
+            }
         };
         lines.push(Line::from(vec![
             Span::styled(
@@ -149,6 +180,33 @@ pub(crate) fn draw_view_overlay(f: &mut Frame, app: &App, theme: &Theme) {
             Span::styled(state_str, state_style),
         ]));
     }
+
+    // When the publisher is enabled, add a small details block for the
+    // Events row: socket path, live connection count, drop counter.
+    let publisher = app.publisher();
+    if publisher.is_enabled() {
+        let socket = publisher
+            .socket_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let conns = publisher.conn_count();
+        let dropped = publisher.dropped_total();
+        let detail_style = Style::default().fg(theme.graph_text);
+        let value_style = Style::default().fg(theme.main_fg);
+        lines.push(Line::from(vec![
+            Span::styled("      Socket:  ", detail_style),
+            Span::styled(socket, value_style),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("      Conns:   ", detail_style),
+            Span::styled(format!("{conns}"), value_style),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("      Dropped: ", detail_style),
+            Span::styled(format!("{dropped}"), value_style),
+        ]));
+    }
+
     lines.push(Line::from(""));
     let key_toggle = t("view.key_toggle");
     lines.push(Line::from(Span::styled(

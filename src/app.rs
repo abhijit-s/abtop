@@ -289,6 +289,24 @@ impl App {
         &self.publisher
     }
 
+    /// Toggle the runtime pause flag on the active publisher. When the
+    /// publisher is in the strict-mode `disabled()` state (started without
+    /// `--events`), surface a status hint instead of lazy-binding a socket.
+    pub fn toggle_events_pause(&mut self) {
+        if !self.publisher.is_enabled() {
+            self.set_status("events disabled — restart with --events to enable".into());
+            return;
+        }
+        let new_paused = !self.publisher.is_paused();
+        self.publisher.set_paused(new_paused);
+        let msg = if new_paused {
+            "events paused"
+        } else {
+            "events resumed"
+        };
+        self.set_status(msg.into());
+    }
+
     /// Hook called at the end of `tick()`: build a snapshot, diff it
     /// against the previous snapshot, and publish any resulting events.
     /// First-tick suppression is implicit — when `prev_snapshot` is
@@ -1380,6 +1398,67 @@ mod tests {
     }
 
     #[test]
+    fn toggle_events_pause_is_noop_when_disabled() {
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            crate::config::PanelVisibility::default(),
+        );
+        // Default publisher is disabled — toggle must NOT panic and must
+        // set a status hint pointing the user at the CLI flag.
+        assert!(!app.publisher().is_enabled());
+        app.toggle_events_pause();
+        assert!(!app.publisher().is_paused());
+        let msg = app
+            .status_msg
+            .as_ref()
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("");
+        assert!(msg.contains("--events"), "got status: {msg:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn toggle_events_pause_flips_when_enabled() {
+        use crate::events::EventPublisher;
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("toggle-pause.sock");
+        let publisher = EventPublisher::bind_uds(&path).expect("bind");
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            crate::config::PanelVisibility::default(),
+        );
+        app.set_publisher(publisher);
+        assert!(app.publisher().is_enabled());
+        assert!(!app.publisher().is_paused());
+
+        app.toggle_events_pause();
+        assert!(app.publisher().is_paused());
+        let msg = app
+            .status_msg
+            .as_ref()
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("");
+        assert!(
+            msg.contains("paused"),
+            "expected paused status, got: {msg:?}"
+        );
+
+        app.toggle_events_pause();
+        assert!(!app.publisher().is_paused());
+        let msg = app
+            .status_msg
+            .as_ref()
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("");
+        assert!(
+            msg.contains("resumed"),
+            "expected resumed status, got: {msg:?}"
+        );
+    }
+
+    #[test]
     fn killable_agent_command_rejects_codex_app_server() {
         assert!(is_killable_agent_command("codex --resume abc"));
         assert!(is_killable_agent_command("/usr/local/bin/claude"));
@@ -1399,11 +1478,7 @@ mod cycle_theme_tests {
     fn cycle_theme_falls_back_to_THEME_NAMES_when_cycle_names_empty() {
         // App constructed without set_cycle_names: cycle_names is empty,
         // so cycle_theme falls back to the embedded THEME_NAMES const.
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
         // Theme::default() is btop (THEME_NAMES[0]); cycling moves to dracula (index 1).
         assert_eq!(app.theme.name, "btop");
         app.cycle_theme();
@@ -1435,11 +1510,7 @@ mod theme_source_tests {
 
     #[test]
     fn set_theme_source_round_trip() {
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
         let src = ThemeSource {
             path: PathBuf::from("/tmp/x.theme"),
             mtime: None,
@@ -1463,11 +1534,7 @@ mod theme_source_tests {
 
     #[test]
     fn check_for_theme_reload_no_source_is_noop() {
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
         let original_name = app.theme.name.clone();
         app.check_for_theme_reload();
         assert_eq!(app.theme.name, original_name);
@@ -1480,12 +1547,11 @@ mod theme_source_tests {
         write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
         let old_mtime = read_mtime(&path);
 
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
-        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime: old_mtime }));
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
+        app.set_theme_source(Some(ThemeSource {
+            path: path.clone(),
+            mtime: old_mtime,
+        }));
 
         std::thread::sleep(Duration::from_millis(50));
         write_theme_file_with(&path, r##"theme[main_bg]="#abcdef""##);
@@ -1502,11 +1568,7 @@ mod theme_source_tests {
         write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
         let mtime = read_mtime(&path);
 
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
         let original_main_bg = app.theme.main_bg;
         app.set_theme_source(Some(ThemeSource { path, mtime }));
 
@@ -1519,11 +1581,7 @@ mod theme_source_tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("never-existed.theme");
 
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
         let original_main_bg = app.theme.main_bg;
         app.set_theme_source(Some(ThemeSource { path, mtime: None }));
 
@@ -1538,12 +1596,11 @@ mod theme_source_tests {
         write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
         let mtime = read_mtime(&path);
 
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
-        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
+        app.set_theme_source(Some(ThemeSource {
+            path: path.clone(),
+            mtime,
+        }));
 
         std::fs::remove_file(&path).unwrap();
         app.check_for_theme_reload();
@@ -1567,7 +1624,10 @@ mod theme_source_tests {
             &[],
             PanelVisibility::default(),
         );
-        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+        app.set_theme_source(Some(ThemeSource {
+            path: path.clone(),
+            mtime,
+        }));
 
         std::thread::sleep(Duration::from_millis(50));
         write_theme_file_with(&path, r##"theme[main_bg]="#abcdef""##);
@@ -1587,12 +1647,11 @@ mod theme_source_tests {
         write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
         let mtime = read_mtime(&path);
 
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
-        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
+        app.set_theme_source(Some(ThemeSource {
+            path: path.clone(),
+            mtime,
+        }));
         app.set_cycle_names(vec!["btop".to_string(), "dracula".to_string()]);
 
         // Cycle from btop -> dracula (both embedded, neither expected to
@@ -1625,18 +1684,21 @@ mod theme_source_tests {
         write_theme_file_with(&path, r##"theme[main_bg]="#111111""##);
         let mtime = read_mtime(&path);
 
-        let mut app = App::new_with_config(
-            Theme::default(),
-            &[],
-            PanelVisibility::default(),
-        );
-        app.set_theme_source(Some(ThemeSource { path: path.clone(), mtime }));
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
+        app.set_theme_source(Some(ThemeSource {
+            path: path.clone(),
+            mtime,
+        }));
 
         std::thread::sleep(Duration::from_millis(50));
         write_theme_file_with(&path, r##"theme[main_bg]="#XYZ""##);
         app.check_for_theme_reload();
 
-        let status = app.status_msg.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
+        let status = app
+            .status_msg
+            .as_ref()
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("");
         assert!(
             status.contains("parse error"),
             "status should mention parse error, got: {status:?}"
