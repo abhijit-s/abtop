@@ -418,6 +418,11 @@ Config files are mtime-polled by `App::tick`. Changes apply live for:
 - `[plugins.notifier].rule` — recompiled on each change
 - `[plugins.notifier].debounce_ms` — applied to subsequent fires
 - `[plugins.notifier].backend` — re-probes the chosen backend
+- `[plugins.system_notifier].enabled` — pauses or resumes the worker
+- `[plugins.system_notifier].conduit` / `conduit_args` — applied to the
+  next invocation
+- `[plugins.system_notifier].on` / `title` / `body` / `debounce_ms` /
+  `conduit_timeout_ms` — applied to subsequent fires
 
 Changes require restart for:
 
@@ -434,6 +439,8 @@ When a restart-required field changes, abtop logs `restart required to apply
 - `--events-tcp host:port` — bind a TCP listener instead of a UDS
 - `--print-socket-path` — print the resolved socket path and exit
 - `--plugin-notify` / `--no-plugin-notify` — force the notifier on/off
+- `--plugin-system-notify` / `--no-plugin-system-notify` — force the
+  System Notifier on/off (same precedence as the notifier flags)
 - `--config <path>` — use a specific config file
 - `--no-config` — skip config files entirely (defaults + flags only)
 - `--list-plugins` — print the catalogue of plugins compiled into this
@@ -466,13 +473,60 @@ binary that responds to a cheap `--version` / `-help` probe. Explicit values
 skip the probe and fail closed to `stderr` if the named backend is
 unavailable.
 
+### System Notifier
+
+A second compiled-in plugin that surfaces events through a user-supplied
+conduit binary. Unlike the built-in `notifier` (which dispatches to
+osascript / notify-send / terminal-notifier), the System Notifier owns the
+connect-loop and NDJSON parsing but delegates the actual notification to a
+script the user writes — `notify.sh`, an `ntfy` CLI wrapper, a curl
+webhook, anything that reads stdin and reacts to env vars. One conduit per
+plugin instance; routing across multiple notification surfaces belongs in
+the conduit script.
+
+```toml
+[plugins.system_notifier]
+enabled            = true                                       # off by default
+conduit            = "~/bin/notify.sh"                           # ~ and ${VAR} expand
+conduit_args       = []                                          # extra positional args
+on                 = ["RateLimited", "ContextThreshold"]         # empty = all event types
+title              = "abtop: {kind}"                             # rendered before spawn
+body               = "{session_id}"                              # same {field} grammar as notifier
+debounce_ms        = 5000                                        # per (rule, event-identity) window
+conduit_timeout_ms = 5000                                        # per-invocation wall-clock cap
+```
+
+Conduit contract: each event spawns the conduit fresh. The full
+`WireRecord` JSON is written to stdin and stdin is closed; the rendered
+title/body and curated metadata land in env vars before exec:
+
+- `ABTOP_TITLE` — rendered `title` template (post-`{field}` substitution)
+- `ABTOP_BODY` — rendered `body` template
+- `ABTOP_EVENT_TYPE` — the `AppEvent` variant name (e.g. `RateLimited`)
+- `ABTOP_TS_MS` — event timestamp in milliseconds since the Unix epoch
+- `ABTOP_FIELD_<KEY>` — one var per flat string/number top-level field on
+  the event, hard-capped at 4 KiB each (the full payload is still on
+  stdin, so truncation here only affects the convenience shortcut)
+
+Failure semantics are log + drop. The reader thread `try_send`s into a
+bounded `mpsc::sync_channel(32)`; on full the event is dropped and a
+rate-limited stderr line surfaces the count. The invocation thread
+enforces `conduit_timeout_ms` with a kill-and-reap; non-zero exits and
+spawn failures are logged once per 30s and never retried — wrap your
+script in a circuit breaker if you need that semantics.
+
+The System Notifier appears in `abtop --list-plugins` alongside the
+notifier; its catalogue entry includes a copy-pasteable snippet matching
+the block above.
+
 ### Discovering plugins
 
 Run `abtop --list-plugins` to see which plugins are compiled into your
 binary, their default startup state, and a copy-pasteable config snippet
-for `~/.config/abtop/config.toml`. With the default feature set this lists
-the notifier; with `--no-default-features` the catalogue is empty and the
-command tells you how to rebuild with a plugin feature.
+for `~/.config/abtop/config.toml`. With the default feature set this
+lists both the `notifier` and `system_notifier`; with
+`--no-default-features` the catalogue is empty and the command tells you
+how to rebuild with a plugin feature.
 
 ## Commit Convention
 

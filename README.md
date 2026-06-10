@@ -333,6 +333,27 @@ body  = "Resets at {resets_at_ms}"
 abtop --events --plugin-notify
 ```
 
+### System Notifier (user-supplied conduit)
+
+When you want to route events through your own script — `notify.sh`, an
+`ntfy` CLI, a curl webhook — enable the System Notifier instead of (or
+alongside) the built-in backends. The plugin pipes the full event JSON
+on stdin and exports `ABTOP_TITLE` / `ABTOP_BODY` / `ABTOP_EVENT_TYPE`
+plus per-field `ABTOP_FIELD_*` env vars before invoking the conduit.
+
+```toml
+[plugins.system_notifier]
+enabled = true
+conduit = "~/bin/notify.sh"
+on      = ["RateLimited", "ContextThreshold"]
+title   = "abtop: {kind}"
+body    = "{session_id}"
+```
+
+```bash
+abtop --events --plugin-system-notify
+```
+
 See [AGENTS.md](./AGENTS.md#live-event-stream) for the full wire format,
 event variant reference, config schema, and hot-reload semantics.
 
