@@ -49,7 +49,7 @@ pub struct RateLimitInfo {
     pub updated_at: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SessionStatus {
     /// Model is generating a response (last_user_ts_ms > 0)
     Thinking,
