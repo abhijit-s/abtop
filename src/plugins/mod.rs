@@ -15,6 +15,8 @@
 pub mod common;
 #[cfg(feature = "plugin-notifier")]
 pub mod notifier;
+#[cfg(feature = "plugin-system-notifier")]
+pub mod system_notifier;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;

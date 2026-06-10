@@ -57,13 +57,11 @@ fn default_backlog() -> usize {
     256
 }
 
-/// `[plugins.*]` container. Currently only the notifier table is
-/// recognized; adding more plugins later means extending this struct.
-///
-/// Even when the `plugin-notifier` feature is disabled we still parse
-/// the table (as an opaque `toml::Value`) so a config file shared
-/// across builds doesn't error out. The non-feature build just ignores
-/// the parsed value.
+/// `[plugins.*]` container. Each compiled-in plugin's TOML table is
+/// represented here. Even when a plugin's Cargo feature is disabled we
+/// still parse its table (as an opaque `toml::Value`) so a config file
+/// shared across builds doesn't error out — the non-feature build just
+/// ignores the parsed value.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct PluginsTable {
     #[cfg(feature = "plugin-notifier")]
@@ -72,6 +70,13 @@ pub struct PluginsTable {
     #[cfg(not(feature = "plugin-notifier"))]
     #[serde(default)]
     pub notifier: Option<toml::Value>,
+
+    #[cfg(feature = "plugin-system-notifier")]
+    #[serde(default)]
+    pub system_notifier: Option<crate::plugins::system_notifier::SystemNotifierConfig>,
+    #[cfg(not(feature = "plugin-system-notifier"))]
+    #[serde(default)]
+    pub system_notifier: Option<toml::Value>,
 }
 
 #[cfg(test)]
@@ -85,6 +90,25 @@ mod tests {
         assert_eq!(cf.events.backlog, 256);
         assert!(cf.events.socket.is_none());
         assert!(cf.plugins.notifier.is_none());
+        assert!(cf.plugins.system_notifier.is_none());
+    }
+
+    #[cfg(feature = "plugin-system-notifier")]
+    #[test]
+    fn system_notifier_section_round_trips() {
+        let cf: ConfigFile = toml::from_str(
+            r#"
+            [plugins.system_notifier]
+            enabled = true
+            conduit = "/bin/notify.sh"
+            on = ["StatusChanged"]
+            "#,
+        )
+        .unwrap();
+        let s = cf.plugins.system_notifier.expect("system_notifier present");
+        assert!(s.enabled_at_startup);
+        assert_eq!(s.conduit, "/bin/notify.sh");
+        assert_eq!(s.on, vec!["StatusChanged".to_string()]);
     }
 
     #[test]

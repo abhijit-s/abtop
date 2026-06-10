@@ -14,11 +14,15 @@ authors = ["Tae Hwan Jung <nlkey2022@gmail.com>"]
 exclude = ["assets/*", "assets/**/*"]
 
 [features]
-default = ["plugin-notifier"]
+default = ["plugin-notifier", "plugin-system-notifier"]
 # Compile the in-process Notifier reference plugin. Disable with
 # `cargo build --no-default-features` to ship a minimal binary that
 # doesn't carry the notifier worker.
 plugin-notifier = []
+# Compile the in-process System Notifier plugin — surfaces events
+# through a user-supplied conduit binary (notify.sh, ntfy, curl, ...).
+# Sibling to `plugin-notifier`; pluggable on the user side.
+plugin-system-notifier = []
 
 [dependencies]
 ratatui = "0.29"
