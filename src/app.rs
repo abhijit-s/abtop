@@ -1,11 +1,14 @@
 use crate::collector::{read_rate_limits, McpServer, MultiCollector};
+use crate::events::{EventDifferState, EventPublisher};
 use crate::host_info::{AgentAggregate, HostMetrics, HostSampler};
 use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
+use crate::snapshot::Snapshot;
 use crate::theme::Theme;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Maximum data points kept for the live token-rate graph.
 const GRAPH_HISTORY_LEN: usize = 200;
@@ -186,6 +189,18 @@ pub struct App {
     /// Source of the active theme on disk, or None for embedded.
     /// Polled in `App::tick` for mid-session reload (B5).
     theme_source: Option<ThemeSource>,
+    /// Pub-sub event publisher. Defaults to the no-op publisher; the
+    /// CLI / config swaps in a real UDS-bound publisher when events
+    /// are enabled. `emit_events()` skips work when this is disabled.
+    publisher: Arc<EventPublisher>,
+    /// Snapshot from the previous `tick()` — `diff()` is called against
+    /// `(prev, next)`. `None` on the first tick suppresses event
+    /// emission until baseline is established.
+    prev_snapshot: Option<Snapshot>,
+    /// Hysteresis / latch state for `events::diff`. Persists across
+    /// ticks; reset on publisher disabled→enabled transitions to
+    /// suppress backlog.
+    differ_state: EventDifferState,
 }
 
 impl App {
@@ -254,7 +269,52 @@ impl App {
             view_open: false,
             cycle_names: Vec::new(),
             theme_source: None,
+            publisher: EventPublisher::disabled(),
+            prev_snapshot: None,
+            differ_state: EventDifferState::default(),
         }
+    }
+
+    /// Replace the events publisher. Resets the diff baseline so the
+    /// first tick after switching emits no events.
+    pub fn set_publisher(&mut self, publisher: Arc<EventPublisher>) {
+        self.publisher = publisher;
+        self.prev_snapshot = None;
+        self.differ_state = EventDifferState::default();
+    }
+
+    /// Borrow the active publisher (for the CLI to read socket path,
+    /// drop counts, etc.).
+    pub fn publisher(&self) -> &Arc<EventPublisher> {
+        &self.publisher
+    }
+
+    /// Hook called at the end of `tick()`: build a snapshot, diff it
+    /// against the previous snapshot, and publish any resulting events.
+    /// First-tick suppression is implicit — when `prev_snapshot` is
+    /// `None`, we only seed the baseline.
+    fn emit_events(&mut self) {
+        if !self.publisher.is_enabled() {
+            // Still ensure baseline gets set when publisher is later
+            // enabled — but only after a transition. We reset
+            // prev_snapshot in `set_publisher`, so leaving it stale
+            // here is fine.
+            return;
+        }
+        let next = self.to_snapshot(2_000);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if let Some(prev) = &self.prev_snapshot {
+            let slow_tick = self.collector.slow_tick_ran();
+            let events =
+                crate::events::diff(&mut self.differ_state, prev, &next, slow_tick, now_ms);
+            if !events.is_empty() {
+                self.publisher.publish(&events);
+            }
+        }
+        self.prev_snapshot = Some(next);
     }
 
     pub fn toggle_help(&mut self) {
@@ -621,6 +681,7 @@ impl App {
         self.tick_no_summaries();
         self.drain_and_retry_summaries();
         self.check_for_theme_reload();
+        self.emit_events();
     }
 
     /// Refresh all monitored data WITHOUT spawning background summary jobs.

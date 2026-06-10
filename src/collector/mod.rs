@@ -288,6 +288,13 @@ pub struct MultiCollector {
     /// with the existing 1-of-N HashMap-overwrite caveat).
     pub mcp_suppress: bool,
     desktop_rollout_scanner: DesktopRolloutScanner,
+    /// Whether the most recent `collect()` call performed the slow-tier
+    /// branch (rate limits, orphan-port refresh, git, MCP refresh). Read
+    /// by `events::diff` to gate slow-tier event variants — false on
+    /// fast ticks means rate-limit/port/mcp events do NOT emit even if
+    /// the underlying data drifted. Set at the top of `collect()` once
+    /// the tick decision is made; never cleared elsewhere.
+    slow_tick_ran: bool,
 }
 
 /// How often to refresh expensive I/O (in ticks). 5 ticks × 2s = 10s.
@@ -332,7 +339,15 @@ impl MultiCollector {
             mcp_servers: Vec::new(),
             mcp_suppress: true,
             desktop_rollout_scanner: DesktopRolloutScanner::new(),
+            slow_tick_ran: false,
         }
+    }
+
+    /// Returns whether the most recent [`collect()`] call performed
+    /// slow-tier work (every `SLOW_POLL_INTERVAL` ticks). Used by
+    /// `events::diff` to gate slow-tier event variants.
+    pub fn slow_tick_ran(&self) -> bool {
+        self.slow_tick_ran
     }
 
     pub fn set_mcp_suppress(&mut self, on: bool) {
@@ -357,6 +372,7 @@ impl MultiCollector {
 
     pub fn collect(&mut self) -> Vec<AgentSession> {
         let slow_tick = self.tick_count >= SLOW_POLL_INTERVAL;
+        self.slow_tick_ran = slow_tick;
         if slow_tick {
             self.tick_count = 0;
         }
