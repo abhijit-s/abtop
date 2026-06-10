@@ -17,7 +17,10 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
-# Homebrew tap repository
-tap = "abhijit-s/abtop"
-# Publish jobs for Homebrew
-publish-jobs = ["homebrew"]
+# Homebrew formula is generated as a release asset by the `homebrew`
+# installer above, but we do NOT auto-publish it to a tap. Instead the
+# generated `abtop.rb` is downloaded after each release and committed
+# to `Formula/abtop.rb` in this repo. Users tap via the URL form:
+#   brew tap abhijit-s/abtop https://github.com/abhijit-s/abtop
+# This keeps the release flow PAT-free and avoids cross-repo pushes.
+publish-jobs = []
