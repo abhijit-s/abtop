@@ -158,6 +158,12 @@ struct EventsCliFlags {
     /// config file). Tracked here so future config-loader code can
     /// honor the CLI override.
     no_plugin_notify: bool,
+    /// `--plugin-system-notify` → start the system-notifier plugin at
+    /// boot. CLI wins over the TOML default; same precedence rules as
+    /// `--plugin-notify`.
+    plugin_system_notify: bool,
+    /// `--no-plugin-system-notify` → explicit opt-out.
+    no_plugin_system_notify: bool,
     /// `--config <path>` → load the given file as the main config and
     /// skip the `plugins.d/` drop-in directory.
     config_path: Option<String>,
@@ -190,6 +196,10 @@ fn parse_events_cli_flags() -> EventsCliFlags {
             out.plugin_notify = true;
         } else if a == "--no-plugin-notify" {
             out.no_plugin_notify = true;
+        } else if a == "--plugin-system-notify" {
+            out.plugin_system_notify = true;
+        } else if a == "--no-plugin-system-notify" {
+            out.no_plugin_system_notify = true;
         } else if a == "--config" {
             if let Some(v) = args.get(i + 1) {
                 out.config_path = Some(v.clone());
@@ -543,12 +553,37 @@ fn build_plugins_registry(
         file_notifier_enabled
     };
 
+    // Same precedence chain for system_notifier.
+    let file_system_notifier_enabled = {
+        #[cfg(feature = "plugin-system-notifier")]
+        {
+            loaded.plugins.system_notifier.enabled_at_startup
+        }
+        #[cfg(not(feature = "plugin-system-notifier"))]
+        {
+            let _ = loaded;
+            false
+        }
+    };
+    let want_system_notifier = if flags.no_plugin_system_notify {
+        false
+    } else if flags.plugin_system_notify {
+        true
+    } else {
+        file_system_notifier_enabled
+    };
+
     let socket_path = match publisher.socket_path() {
         Some(p) => p.to_path_buf(),
         None => {
             if want_notifier {
                 eprintln!(
                     "notifier: events publisher is disabled — start with --events to enable plugins"
+                );
+            }
+            if want_system_notifier {
+                eprintln!(
+                    "system_notifier: events publisher is disabled — start with --events to enable plugins"
                 );
             }
             return plugins::BuiltRegistry::default();
@@ -567,6 +602,19 @@ fn build_plugins_registry(
     {
         if want_notifier {
             eprintln!("notifier: this build was compiled without --features plugin-notifier");
+        }
+    }
+    #[cfg(feature = "plugin-system-notifier")]
+    {
+        cfg.system_notifier = loaded.plugins.system_notifier.clone();
+        cfg.system_notifier.enabled_at_startup = want_system_notifier;
+    }
+    #[cfg(not(feature = "plugin-system-notifier"))]
+    {
+        if want_system_notifier {
+            eprintln!(
+                "system_notifier: this build was compiled without --features plugin-system-notifier"
+            );
         }
     }
     cfg.build_registry(socket_path)
@@ -961,6 +1009,10 @@ mod events_cli_tests {
                 out.plugin_notify = true;
             } else if a == "--no-plugin-notify" {
                 out.no_plugin_notify = true;
+            } else if a == "--plugin-system-notify" {
+                out.plugin_system_notify = true;
+            } else if a == "--no-plugin-system-notify" {
+                out.no_plugin_system_notify = true;
             } else if a == "--config" {
                 if let Some(v) = argv.get(i + 1) {
                     out.config_path = Some((*v).to_string());
@@ -992,6 +1044,45 @@ mod events_cli_tests {
         let f = parse(&["--plugin-notify", "--no-plugin-notify"]);
         assert!(f.plugin_notify);
         assert!(f.no_plugin_notify);
+    }
+
+    #[test]
+    fn plugin_system_notify_flag_sets_field() {
+        let f = parse(&["--plugin-system-notify"]);
+        assert!(f.plugin_system_notify);
+        assert!(!f.no_plugin_system_notify);
+        // Notifier flags are independent.
+        assert!(!f.plugin_notify);
+        assert!(!f.no_plugin_notify);
+    }
+
+    #[test]
+    fn no_plugin_system_notify_flag_sets_field() {
+        let f = parse(&["--no-plugin-system-notify"]);
+        assert!(!f.plugin_system_notify);
+        assert!(f.no_plugin_system_notify);
+    }
+
+    #[test]
+    fn both_plugin_system_notify_flags_recorded_separately() {
+        let f = parse(&["--plugin-system-notify", "--no-plugin-system-notify"]);
+        assert!(f.plugin_system_notify);
+        assert!(f.no_plugin_system_notify);
+    }
+
+    #[test]
+    fn plugin_system_notify_independent_of_notifier_flags() {
+        // Mixed order to verify the hand-rolled parser is not
+        // order-sensitive between the two plugin families.
+        let f = parse(&["--no-plugin-notify", "--plugin-system-notify", "--events"]);
+        assert!(f.no_plugin_notify);
+        assert!(f.plugin_system_notify);
+        assert!(f.enable);
+        // Reverse order — same outcome.
+        let g = parse(&["--events", "--plugin-system-notify", "--no-plugin-notify"]);
+        assert!(g.no_plugin_notify);
+        assert!(g.plugin_system_notify);
+        assert!(g.enable);
     }
 
     #[test]
