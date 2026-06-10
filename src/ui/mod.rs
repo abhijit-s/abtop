@@ -409,10 +409,22 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_overlays(f, app, theme);
 }
 
+/// Footer is 2 rows when the events publisher is enabled (the events
+/// status renders as a second line under the keybinding hints) and
+/// 1 row otherwise.
+fn footer_height(app: &App) -> u16 {
+    if app.publisher().is_enabled() {
+        2
+    } else {
+        1
+    }
+}
+
 fn desktop_layout(app: &App, area: Rect) -> DesktopLayout {
     const CONTEXT_MIN: u16 = 5;
-    const FIXED: u16 = 2; // header + footer
     const MID_MIN: u16 = 6;
+    let footer_h = footer_height(app);
+    let fixed: u16 = 1 + footer_h; // header + footer
 
     let mut mid_sections = Vec::new();
     if app.show_quota {
@@ -440,7 +452,7 @@ fn desktop_layout(app: &App, area: Rect) -> DesktopLayout {
     };
     let context_ideal: u16 = (app.sessions.len() as u16 + 4).clamp(5, 10);
 
-    let available = area.height.saturating_sub(FIXED);
+    let available = area.height.saturating_sub(fixed);
     let mid_reserved = if any_mid { MID_MIN.min(available) } else { 0 };
     let sessions_budget = available.saturating_sub(mid_reserved);
     let sessions_h = if app.show_sessions {
@@ -483,7 +495,7 @@ fn desktop_layout(app: &App, area: Rect) -> DesktopLayout {
         constraints[n] = Constraint::Min(sessions_h);
         n += 1;
     }
-    constraints[n] = Constraint::Length(1);
+    constraints[n] = Constraint::Length(footer_h);
     n += 1;
 
     let chunks = Layout::default()
@@ -538,13 +550,14 @@ fn desktop_layout(app: &App, area: Rect) -> DesktopLayout {
 }
 
 fn draw_narrow(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+    let footer_h = footer_height(app);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(footer_h),
         ])
         .split(area);
 
