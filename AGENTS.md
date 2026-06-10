@@ -292,6 +292,177 @@ Tracks child processes that have open ports. When a parent session dies but the 
   - Process tree (ps): every 2s
   - Port scan (lsof) + git status + rate limits: every 10s (5 ticks)
 
+## Live event stream
+
+abtop emits a pub-sub event feed alongside the TUI and `--json` snapshot. The
+feed is a best-effort observable of state transitions — it complements the
+snapshot for tools that want push semantics without polling.
+
+### Transport
+
+Unix-domain socket (UDS) by default, or TCP when `--events-tcp host:port` is
+passed. Encoding is NDJSON: one `WireRecord` per line. Each record has the
+shape `{ v, ts_ms, ...event_fields }` — the active `AppEvent` variant is
+flattened in via `#[serde(flatten)]` and carries a `type` discriminator
+string. Delivery is best-effort: per-connection queues are bounded, and when a
+queue fills the publisher drops the oldest records, then emits a
+`{"_meta":"dropped","count":N}` marker on the next successful write so
+consumers can resync.
+
+Socket permissions are 0600 (owner-only). Stale sockets from prior runs are
+auto-removed on bind.
+
+### Socket path resolution
+
+| Platform                            | Default                          |
+| ----------------------------------- | -------------------------------- |
+| Linux (`$XDG_RUNTIME_DIR` set)      | `$XDG_RUNTIME_DIR/abtop.sock`    |
+| macOS                               | `$TMPDIR/abtop.sock`             |
+| Fallback                            | `/tmp/abtop-$UID.sock`           |
+
+Override precedence (highest first): CLI `--events=<path>` > `ABTOP_EVENTS_SOCKET`
+env > `[events].socket` config > platform default. `--print-socket-path`
+prints the resolved value without launching the TUI. macOS/BSD `sun_path` is
+capped at 104 bytes; an overlong path returns a clear error pointing at
+`ABTOP_EVENTS_SOCKET`.
+
+### Event variants
+
+Source of truth: `src/events/types.rs`. The table below indexes the variants
+in source order — for full field types and doc comments, read the file.
+
+| `type`                | Tier | Kind       | Key fields                          |
+| --------------------- | ---- | ---------- | ----------------------------------- |
+| `SessionStarted`      | Fast | Lifecycle  | `session_id, agent_cli, pid`        |
+| `SessionEnded`        | Fast | Lifecycle  | `session_id`                        |
+| `StatusChanged`       | Fast | Status     | `session_id, from, to`              |
+| `ContextThreshold`    | Fast | Threshold  | `session_id, bucket`                |
+| `TokenRateSpike`      | Fast | Threshold  | `rate, baseline`                    |
+| `RateLimited`         | Slow | Quota      | `provider, resets_at_ms`            |
+| `RateLimitCleared`    | Slow | Quota      | `provider`                          |
+| `OrphanPortAppeared`  | Slow | Resource   | `port, prior_pid`                   |
+| `McpServerAppeared`   | Slow | Resource   | `pid, parent_cli`                   |
+| `McpServerVanished`   | Slow | Resource   | `pid`                               |
+| `ToolCalled`          | Fast | Activity   | `session_id, tool, arg`             |
+| `CompactionDetected`  | Fast | Activity   | `session_id`                        |
+| `SubagentSpawned`     | Fast | Activity   | `session_id, name`                  |
+| `HostLoadHigh`        | Fast | Host       | `load1`                             |
+
+Fast events are evaluated every tick (~2s). Slow events only emit on ticks
+where the slow collector branch (lsof, rate limits) ran (~10s).
+
+`ContextThreshold` buckets are 70/90/95 with hysteresis — each bucket is an
+independent latch with a separate clear threshold, so flapping near a
+boundary won't spam.
+
+### Schema versioning
+
+The wire schema version is exposed as the constant `events::types::WIRE_VERSION`
+and is currently `1`. Additive fields (new event variants, new optional
+fields on existing variants) do NOT bump `v`. Renames, removals, or type
+changes DO. Consumers that care about forward-compat should branch on `v`.
+
+### Config schema
+
+Main file: `$XDG_CONFIG_HOME/abtop/config.toml` (or `$HOME/.config/abtop/config.toml`).
+Drop-ins from `$XDG_CONFIG_HOME/abtop/plugins.d/*.toml` are merged in
+filename order. Precedence: built-in defaults → main file → drop-ins (rule
+arrays append, scalars override) → `ABTOP_EVENTS_SOCKET` env → CLI flags.
+
+```toml
+# ~/.config/abtop/config.toml
+
+[events]
+enabled = true                                  # off by default; --events also enables
+socket  = "${XDG_RUNTIME_DIR}/abtop.sock"       # ${UID}, ${XDG_RUNTIME_DIR}, and ~ expand
+backlog = 256                                   # per-connection NDJSON queue depth
+
+[plugins.notifier]
+enabled      = true                             # start notifier worker at launch
+backend      = "auto"                           # auto | osascript | notify-send | terminal-notifier | stderr
+debounce_ms  = 5000                             # default per-rule debounce window
+
+# Rule grammar:
+#   on          = list of event `type` names; empty / omitted = wildcard
+#   when        = single comparison, "<field> <op> <literal>"
+#                 op      ∈ { ==, !=, <=, >=, <, > }
+#                 literal = "quoted string" OR bare number
+#                 (no `and`/`or` — write two rules instead)
+#   title/body  = templates; `{field}` substitutes from the event,
+#                 plus `{kind}`, `{ts_ms}`, `{v}`
+#   debounce_ms = optional per-rule override of the table-level default
+
+[[plugins.notifier.rule]]
+on    = ["ContextThreshold"]
+when  = "bucket >= 90"
+title = "{session_id} context {bucket}%"
+body  = "Approaching window limit at {ts_ms}"
+
+[[plugins.notifier.rule]]
+on          = ["RateLimited"]
+when        = 'provider == "claude"'
+title       = "Claude rate-limited"
+body        = "Resets at {resets_at_ms}"
+debounce_ms = 60000
+```
+
+Invalid `when` expressions disable only the offending rule and log a single
+stderr line at load — they never take the worker down.
+
+### Hot reload
+
+Config files are mtime-polled by `App::tick`. Changes apply live for:
+
+- `[events].enabled` — pauses or resumes the publisher in place
+- `[plugins.notifier].enabled` — pauses or resumes the notifier worker
+- `[plugins.notifier].rule` — recompiled on each change
+- `[plugins.notifier].debounce_ms` — applied to subsequent fires
+- `[plugins.notifier].backend` — re-probes the chosen backend
+
+Changes require restart for:
+
+- `[events].socket` — the listener is bound once at startup
+- `[events].backlog` — queue depth is fixed per connection
+
+When a restart-required field changes, abtop logs `restart required to apply
+<field>` and keeps running with the previous value.
+
+### CLI flags
+
+- `--events[=path]` — enable the publisher, optionally overriding the socket path
+- `--events-off` — force-disable the publisher even if config enables it
+- `--events-tcp host:port` — bind a TCP listener instead of a UDS
+- `--print-socket-path` — print the resolved socket path and exit
+- `--plugin-notify` / `--no-plugin-notify` — force the notifier on/off
+- `--config <path>` — use a specific config file
+- `--no-config` — skip config files entirely (defaults + flags only)
+
+### TUI controls
+
+- `e` — toggle pause/resume on the publisher; footer shows current state
+- `v` — view menu; the Events row shows the full untruncated socket path,
+  live connection count, and lifetime dropped-record count
+
+### Notifier backends
+
+| Backend             | Platform     | Notes                                     |
+| ------------------- | ------------ | ----------------------------------------- |
+| `osascript`         | macOS        | Built-in; no extra install                |
+| `terminal-notifier` | macOS        | Optional `brew install terminal-notifier` |
+| `notify-send`       | Linux        | From `libnotify-bin` or distro equivalent |
+| `stderr`            | Any          | Always-available fallback                 |
+
+Auto-probe order:
+
+- macOS: `osascript` → `terminal-notifier` → `stderr`
+- Linux: `notify-send` → `stderr`
+- Other Unix: `stderr` only
+
+`backend = "auto"` (the default) walks the platform list and picks the first
+binary that responds to a cheap `--version` / `-help` probe. Explicit values
+skip the probe and fail closed to `stderr` if the named backend is
+unavailable.
+
 ## Commit Convention
 
 ```

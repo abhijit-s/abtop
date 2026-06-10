@@ -295,6 +295,47 @@ let json = serde_json::to_string(&app.to_snapshot(2_000)).unwrap();
 the serialized JSON elsewhere. [abtop-web-ui](https://github.com/XKHoshizora/abtop-web-ui)
 is a reference consumer: a local-first web dashboard built on exactly this API.
 
+## Live event stream
+
+`--events` opens a local Unix-domain socket that publishes a newline-delimited
+JSON (NDJSON) feed of state transitions — session starts, status changes,
+context thresholds, rate limits, orphan ports, tool calls, and more — so other
+local tools can react in real time without polling the JSON snapshot.
+
+```bash
+abtop --events                                  # one terminal: TUI + publisher
+abtop --print-socket-path                       # prints the resolved socket path
+nc -U "$(abtop --print-socket-path)" | jq -c .  # another terminal: live tail
+```
+
+Press `e` inside the TUI to pause or resume publishing. The footer renders
+`events: on • N conns • <path>` (or `events: off`) when the publisher is
+configured.
+
+### Desktop notifications
+
+abtop ships a reference notifier plugin that turns events into native desktop
+notifications (`osascript` on macOS, `notify-send` on Linux, `stderr`
+fallback). A minimum config:
+
+```toml
+# ~/.config/abtop/config.toml
+[plugins.notifier]
+enabled = true
+
+[[plugins.notifier.rule]]
+on = ["RateLimited"]
+title = "Rate limit: {provider}"
+body  = "Resets at {resets_at_ms}"
+```
+
+```bash
+abtop --events --plugin-notify
+```
+
+See [AGENTS.md](./AGENTS.md#live-event-stream) for the full wire format,
+event variant reference, config schema, and hot-reload semantics.
+
 ## Privacy
 
 abtop reads local files and local process/open-file metadata only. No API keys, no auth. In the TUI and `--once` output, tool names and file paths are shown, but file contents and prompt text are never displayed. Session summaries are generated via `claude --print`, which makes its own API call — this is the only indirect network usage.
