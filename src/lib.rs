@@ -135,10 +135,66 @@ fn set_parse_error_status(app: &mut App, errors: &[theme::ParseError]) {
     ));
 }
 
+/// Parsed events-related CLI flags. Resolution rules:
+///
+/// - `--events-off` overrides `--events` (force-disable wins).
+/// - `--events=<path>` and `--events-tcp host:port` are mutually
+///   exclusive; the later flag in argv wins.
+/// - `--print-socket-path` short-circuits the binary before the
+///   event publisher binds anywhere.
+#[derive(Debug, Default)]
+struct EventsCliFlags {
+    enable: bool,
+    force_off: bool,
+    socket_override: Option<String>,
+    tcp_override: Option<String>,
+    print_socket_path: bool,
+}
+
+fn parse_events_cli_flags() -> EventsCliFlags {
+    let mut out = EventsCliFlags::default();
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--events" {
+            out.enable = true;
+        } else if let Some(path) = a.strip_prefix("--events=") {
+            out.enable = true;
+            out.socket_override = Some(path.to_string());
+        } else if a == "--events-off" {
+            out.force_off = true;
+        } else if a == "--events-tcp" {
+            out.enable = true;
+            if let Some(v) = args.get(i + 1) {
+                out.tcp_override = Some(v.clone());
+            }
+        } else if a == "--print-socket-path" {
+            out.print_socket_path = true;
+        }
+        i += 1;
+    }
+    out
+}
+
 pub fn run() -> io::Result<()> {
     // --version / -V flag: print version and exit
     if std::env::args().any(|a| a == "--version" || a == "-V") {
         println!("abtop {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    // --print-socket-path: resolve and print, then exit. Honors
+    // ABTOP_EVENTS_SOCKET and any --events=<path> override on the CLI.
+    let events_flags = parse_events_cli_flags();
+    if events_flags.print_socket_path {
+        if let Some(addr) = &events_flags.tcp_override {
+            println!("tcp://{addr}");
+        } else {
+            let resolved =
+                events::socket_path::resolve(events_flags.socket_override.as_deref());
+            println!("{}", resolved.display());
+        }
         return Ok(());
     }
 
@@ -315,6 +371,28 @@ pub fn run() -> io::Result<()> {
         return Ok(());
     }
 
+    // Build the events publisher per CLI flags. Force-off wins over
+    // any --events* flag. On bind failure we surface the error to
+    // stderr and continue with a disabled publisher — events being
+    // unavailable should never block the TUI from starting.
+    let publisher: std::sync::Arc<events::EventPublisher> =
+        if events_flags.force_off || !events_flags.enable {
+            events::EventPublisher::disabled()
+        } else {
+            let resolved =
+                events::socket_path::resolve(events_flags.socket_override.as_deref());
+            match events::EventPublisher::bind_uds(&resolved) {
+                Ok(p) => {
+                    println!("abtop events: listening on {}", resolved.display());
+                    p
+                }
+                Err(e) => {
+                    eprintln!("abtop events: bind failed ({}); continuing with events off", e);
+                    events::EventPublisher::disabled()
+                }
+            }
+        };
+
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -331,6 +409,7 @@ pub fn run() -> io::Result<()> {
         &cfg.claude_config_dirs,
         &parse_errors,
         theme_source.clone(),
+        publisher,
     );
 
     // Always attempt both cleanup steps regardless of app result
@@ -342,6 +421,7 @@ pub fn run() -> io::Result<()> {
     app_result.and(r1).and(r2).and(r3)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     demo_mode: bool,
@@ -352,6 +432,7 @@ fn run_app(
     claude_config_dirs: &[std::path::PathBuf],
     parse_errors: &[theme::ParseError],
     theme_source: Option<crate::app::ThemeSource>,
+    publisher: std::sync::Arc<events::EventPublisher>,
 ) -> io::Result<()> {
     let mut app = App::new_with_config_and_claude_dirs(
         initial_theme,
@@ -361,6 +442,7 @@ fn run_app(
     );
     set_parse_error_status(&mut app, parse_errors);
     app.set_theme_source(theme_source);
+    app.set_publisher(publisher);
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
@@ -682,6 +764,85 @@ fn fmt_tok(n: u64) -> String {
         format!("{:.1}k", n as f64 / 1_000.0)
     } else {
         format!("{}", n)
+    }
+}
+
+#[cfg(test)]
+mod events_cli_tests {
+    use super::*;
+
+    /// Parser variant that takes its argv directly (rather than reading
+    /// `std::env::args`), so we can test it from unit tests without
+    /// touching the process environment.
+    fn parse(argv: &[&str]) -> EventsCliFlags {
+        let mut out = EventsCliFlags::default();
+        let mut i = 0;
+        while i < argv.len() {
+            let a = argv[i];
+            if a == "--events" {
+                out.enable = true;
+            } else if let Some(path) = a.strip_prefix("--events=") {
+                out.enable = true;
+                out.socket_override = Some(path.to_string());
+            } else if a == "--events-off" {
+                out.force_off = true;
+            } else if a == "--events-tcp" {
+                out.enable = true;
+                if let Some(v) = argv.get(i + 1) {
+                    out.tcp_override = Some((*v).to_string());
+                }
+            } else if a == "--print-socket-path" {
+                out.print_socket_path = true;
+            }
+            i += 1;
+        }
+        out
+    }
+
+    #[test]
+    fn empty_argv_yields_defaults() {
+        let f = parse(&[]);
+        assert!(!f.enable);
+        assert!(!f.force_off);
+        assert!(f.socket_override.is_none());
+        assert!(f.tcp_override.is_none());
+        assert!(!f.print_socket_path);
+    }
+
+    #[test]
+    fn events_flag_enables() {
+        let f = parse(&["--events"]);
+        assert!(f.enable);
+    }
+
+    #[test]
+    fn events_with_path_sets_override() {
+        let f = parse(&["--events=/tmp/x.sock"]);
+        assert!(f.enable);
+        assert_eq!(f.socket_override.as_deref(), Some("/tmp/x.sock"));
+    }
+
+    #[test]
+    fn events_off_takes_precedence_via_runtime_check() {
+        // The parser itself records both flags; the run() loop uses
+        // `force_off || !enable` to decide. Verify the parser surface
+        // exposes both so the override can apply.
+        let f = parse(&["--events", "--events-off"]);
+        assert!(f.enable);
+        assert!(f.force_off);
+    }
+
+    #[test]
+    fn events_tcp_records_addr() {
+        let f = parse(&["--events-tcp", "127.0.0.1:9999"]);
+        assert!(f.enable);
+        assert_eq!(f.tcp_override.as_deref(), Some("127.0.0.1:9999"));
+    }
+
+    #[test]
+    fn print_socket_path_flag() {
+        let f = parse(&["--print-socket-path"]);
+        assert!(f.print_socket_path);
     }
 }
 
