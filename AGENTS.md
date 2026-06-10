@@ -436,6 +436,9 @@ When a restart-required field changes, abtop logs `restart required to apply
 - `--plugin-notify` / `--no-plugin-notify` — force the notifier on/off
 - `--config <path>` — use a specific config file
 - `--no-config` — skip config files entirely (defaults + flags only)
+- `--list-plugins` — print the catalogue of plugins compiled into this
+  binary, their default startup state, and a copy-pasteable config
+  snippet for `~/.config/abtop/config.toml`
 
 ### TUI controls
 
@@ -462,6 +465,14 @@ Auto-probe order:
 binary that responds to a cheap `--version` / `-help` probe. Explicit values
 skip the probe and fail closed to `stderr` if the named backend is
 unavailable.
+
+### Discovering plugins
+
+Run `abtop --list-plugins` to see which plugins are compiled into your
+binary, their default startup state, and a copy-pasteable config snippet
+for `~/.config/abtop/config.toml`. With the default feature set this lists
+the notifier; with `--no-default-features` the catalogue is empty and the
+command tells you how to rebuild with a plugin feature.
 
 ## Commit Convention
 

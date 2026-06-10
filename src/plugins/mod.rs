@@ -59,6 +59,135 @@ impl PluginsConfig {
     }
 }
 
+/// Static metadata describing one compiled-in plugin. Surfaced by
+/// `abtop --list-plugins` so users can discover plugins and grab a
+/// copy-pasteable config snippet without leaving the terminal.
+///
+/// Each plugin module owns its own `pub fn info() -> PluginInfo`; the
+/// aggregate is assembled by [`list_available`].
+#[derive(Clone, Debug)]
+pub struct PluginInfo {
+    /// Plugin identifier, matches `Plugin::name()`.
+    pub name: &'static str,
+    /// Cargo feature flag that gates the plugin.
+    pub feature: &'static str,
+    /// Whether `feature` is part of `[features].default` in Cargo.toml.
+    pub default_on: bool,
+    /// Whether the plugin auto-spawns at process start without any
+    /// explicit `--plugin-<x>` flag.
+    pub startup_enabled: bool,
+    /// One-paragraph plain-text description.
+    pub description: &'static str,
+    /// One-paragraph plain-text startup behavior summary.
+    pub startup: &'static str,
+    /// Copy-pasteable TOML block keyed for `~/.config/abtop/config.toml`.
+    pub example_config: &'static str,
+    /// Pointer to the canonical docs section.
+    pub docs_pointer: &'static str,
+}
+
+/// Catalogue of plugins compiled into this binary. Empty when every
+/// `plugin-*` feature is disabled.
+pub fn list_available() -> Vec<PluginInfo> {
+    #[allow(unused_mut)]
+    let mut v: Vec<PluginInfo> = Vec::new();
+    #[cfg(feature = "plugin-notifier")]
+    {
+        v.push(crate::plugins::notifier::info());
+    }
+    v
+}
+
+/// Render the plugin catalogue. Generic over `Write` so tests can
+/// capture output into a `Vec<u8>`; the CLI handler passes
+/// `&mut std::io::stdout().lock()`.
+pub fn print_catalogue<W: std::io::Write>(out: &mut W, plugins: &[PluginInfo]) -> std::io::Result<()> {
+    if plugins.is_empty() {
+        writeln!(out, "No plugins compiled into this binary.")?;
+        writeln!(
+            out,
+            "(Plugins are gated behind Cargo features. Rebuild with e.g."
+        )?;
+        writeln!(
+            out,
+            " `cargo install --features plugin-notifier` to enable one.)"
+        )?;
+        return Ok(());
+    }
+    writeln!(out, "Available plugins (compiled into this binary):")?;
+    writeln!(out)?;
+    for p in plugins {
+        let default_marker = if p.default_on { "default-on" } else { "opt-in" };
+        writeln!(
+            out,
+            "  {name:<40}  [feature: {feature} · {marker}]",
+            name = p.name,
+            feature = p.feature,
+            marker = default_marker,
+        )?;
+        write_wrapped(out, "    Description: ", p.description, 17)?;
+        write_wrapped(out, "    Startup:     ", p.startup, 17)?;
+        writeln!(out)?;
+        writeln!(
+            out,
+            "    Example config snippet (drop into ~/.config/abtop/config.toml):"
+        )?;
+        writeln!(out)?;
+        for line in p.example_config.lines() {
+            if line.is_empty() {
+                writeln!(out)?;
+            } else {
+                writeln!(out, "      {line}")?;
+            }
+        }
+        writeln!(out)?;
+        writeln!(out, "    Docs: {}", p.docs_pointer)?;
+        writeln!(out)?;
+    }
+    Ok(())
+}
+
+/// Wrap `text` to ~62 columns of payload after `prefix`, then indent
+/// continuation lines by `indent` spaces. Keeps the catalogue readable
+/// in an 80-column terminal without pulling in a wrapping crate.
+fn write_wrapped<W: std::io::Write>(
+    out: &mut W,
+    prefix: &str,
+    text: &str,
+    indent: usize,
+) -> std::io::Result<()> {
+    const WIDTH: usize = 62;
+    let pad: String = " ".repeat(indent);
+    let mut first = true;
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let extra = if line.is_empty() { word.len() } else { line.len() + 1 + word.len() };
+        if extra > WIDTH && !line.is_empty() {
+            if first {
+                writeln!(out, "{prefix}{line}")?;
+                first = false;
+            } else {
+                writeln!(out, "{pad}{line}")?;
+            }
+            line.clear();
+            line.push_str(word);
+        } else {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+    }
+    if !line.is_empty() {
+        if first {
+            writeln!(out, "{prefix}{line}")?;
+        } else {
+            writeln!(out, "{pad}{line}")?;
+        }
+    }
+    Ok(())
+}
+
 /// Trait implemented by each compiled-in plugin.
 pub trait Plugin: Send + 'static {
     /// Stable identifier — also used as the registry key for runtime
@@ -225,6 +354,46 @@ mod tests {
         assert!(ran.load(Ordering::Relaxed), "should run after enable");
         assert!(!registry.set_enabled("missing", true));
         registry.shutdown();
+    }
+
+    #[test]
+    fn print_catalogue_empty_says_no_plugins() {
+        let mut buf: Vec<u8> = Vec::new();
+        print_catalogue(&mut buf, &[]).expect("write to Vec never fails");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("No plugins compiled into this binary."));
+        assert!(s.contains("--features plugin-notifier"));
+    }
+
+    #[test]
+    fn print_catalogue_renders_plugin_info() {
+        let info = PluginInfo {
+            name: "demo-plugin",
+            feature: "plugin-demo",
+            default_on: true,
+            startup_enabled: false,
+            description: "Test plugin used in unit tests only.",
+            startup: "disabled by default.",
+            example_config: "[plugins.demo]\nenabled = true\n",
+            docs_pointer: "docs/demo.md",
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        print_catalogue(&mut buf, &[info]).expect("write to Vec never fails");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("Available plugins"));
+        assert!(s.contains("demo-plugin"));
+        assert!(s.contains("plugin-demo"));
+        assert!(s.contains("default-on"));
+        assert!(s.contains("[plugins.demo]"));
+        assert!(s.contains("enabled = true"));
+        assert!(s.contains("docs/demo.md"));
+    }
+
+    #[cfg(feature = "plugin-notifier")]
+    #[test]
+    fn list_available_includes_notifier_when_feature_on() {
+        let v = list_available();
+        assert!(v.iter().any(|p| p.name == "notifier"));
     }
 
     #[test]

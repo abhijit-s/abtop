@@ -247,6 +247,15 @@ pub fn run() -> io::Result<()> {
         return Ok(());
     }
 
+    // --list-plugins flag: print catalogue of compiled-in plugins and exit
+    if std::env::args().any(|a| a == "--list-plugins") {
+        let plugins = plugins::list_available();
+        let stdout = std::io::stdout();
+        let mut lock = stdout.lock();
+        plugins::print_catalogue(&mut lock, &plugins)?;
+        return Ok(());
+    }
+
     // --dump-theme <name> [--force] flag: write an embedded theme body to the
     // user themes dir so it can be edited in place. Exits without loading
     // the config or building the app.

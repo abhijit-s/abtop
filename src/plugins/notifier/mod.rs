@@ -122,6 +122,35 @@ pub struct Notifier {
     pub config: SharedNotifierConfig,
 }
 
+/// Metadata for `--list-plugins` rendering. The example config block
+/// must round-trip through [`NotifierConfig`]'s `Deserialize` — see the
+/// `example_config_round_trips` unit test below.
+pub fn info() -> crate::plugins::PluginInfo {
+    crate::plugins::PluginInfo {
+        name: "notifier",
+        feature: "plugin-notifier",
+        default_on: true,
+        startup_enabled: false,
+        description: "Dispatches desktop notifications when published events match \
+                      user-defined rules. Backends: osascript, notify-send, \
+                      terminal-notifier, or stderr fallback.",
+        startup: "disabled by default. Enable with --plugin-notify or set \
+                  `enabled = true` under [plugins.notifier] in \
+                  ~/.config/abtop/config.toml.",
+        example_config: r#"[plugins.notifier]
+enabled = true
+backend = "auto"          # auto | osascript | notify-send | terminal-notifier | stderr
+debounce_ms = 5000
+
+[[plugins.notifier.rule]]
+on    = ["RateLimited"]
+title = "abtop: rate limited"
+body  = "{provider}: {detail}"
+"#,
+        docs_pointer: "AGENTS.md -> \"Live event stream\" -> Notifier",
+    }
+}
+
 impl Notifier {
     /// Construct from an owned config (the common case — wraps in an
     /// `Arc<RwLock<_>>`).
@@ -734,5 +763,27 @@ mod tests {
     #[allow(dead_code)]
     fn _ensure_atomic_used() -> AtomicBool {
         AtomicBool::new(false)
+    }
+
+    #[test]
+    fn example_config_round_trips() {
+        // Guard against the example_config block in `info()` drifting
+        // out of sync with NotifierConfig — every key in the snippet
+        // must deserialize cleanly. We wrap the snippet under the
+        // top-level [plugins] table to mirror how it sits in
+        // ~/.config/abtop/config.toml.
+        let snippet = super::info().example_config;
+        // The snippet uses `[plugins.notifier]`, so parse via
+        // ConfigFile to exercise the full path users actually take.
+        let parsed: crate::event_config::schema::ConfigFile = toml::from_str(snippet)
+            .expect("notifier example_config should parse as ConfigFile");
+        let n = parsed
+            .plugins
+            .notifier
+            .expect("notifier table missing from example_config");
+        assert!(n.enabled_at_startup, "example_config sets enabled = true");
+        assert_eq!(n.debounce_ms, 5_000);
+        assert_eq!(n.rule.len(), 1);
+        assert_eq!(n.rule[0].on, vec!["RateLimited".to_string()]);
     }
 }
