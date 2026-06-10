@@ -10,6 +10,18 @@ use ratatui::Frame;
 
 use super::truncate_str;
 
+/// Render the bottom status bar.
+///
+/// **Height contract** — this function emits either 1 or 2 rows:
+/// - 1 row: keybinding hints + status/peak/session-count (always present).
+/// - 2 rows: the above, plus an events status line (`events: on • N
+///   conns • <path>  [e]`) when the publisher is enabled.
+///
+/// Callers MUST allocate a `Rect` whose height matches what this draws.
+/// The dynamic height is computed by [`super::footer_height`]; both
+/// `desktop_layout` and `draw_narrow` use it for their footer
+/// `Constraint::Length(...)`. If you add a third line here, update
+/// `footer_height` in lockstep or ratatui will silently clip it.
 pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     // Filter input mode: show filter bar instead of normal keybindings
     if app.filter_active {
