@@ -23,6 +23,43 @@ pub mod invoke;
 
 pub use config::{SharedSystemNotifierConfig, SystemNotifierConfig};
 
+/// Metadata for `--list-plugins` rendering. The example config block
+/// must round-trip through [`SystemNotifierConfig`]'s `Deserialize`
+/// (via the top-level [`crate::event_config::schema::ConfigFile`]) —
+/// see the `example_config_round_trips` unit test below.
+pub fn info() -> crate::plugins::PluginInfo {
+    crate::plugins::PluginInfo {
+        name: "system_notifier",
+        feature: "plugin-system-notifier",
+        default_on: true,
+        startup_enabled: false,
+        description: "Surfaces events through a user-supplied conduit binary \
+                      (notify.sh, ntfy, curl, …) — pluggable on the user side. \
+                      The plugin owns the connect-loop and NDJSON parsing; the \
+                      conduit owns the actual notification delivery. For \
+                      abtop's built-in OS-notification backends, see `notifier`.",
+        startup: "disabled by default. Enable with --plugin-system-notify or set \
+                  `enabled = true` under [plugins.system_notifier] in \
+                  ~/.config/abtop/config.toml. The conduit receives the full \
+                  WireRecord JSON on stdin plus curated ABTOP_* env vars; \
+                  per-invocation timeout defaults to 5000ms.",
+        example_config: r#"[plugins.system_notifier]
+enabled = true
+# User-supplied conduit script — e.g. ~/bin/notify.sh that
+# shells out to osascript / ntfy / curl. Subject to ~ and ${VAR}
+# expansion at invocation time.
+conduit = "~/bin/notify.sh"
+conduit_args = []
+on = ["RateLimited", "ContextThreshold"]
+title = "abtop: {kind}"
+body  = "{session_id}"
+debounce_ms = 5000
+conduit_timeout_ms = 5000
+"#,
+        docs_pointer: "AGENTS.md -> \"Live event stream\" -> System Notifier",
+    }
+}
+
 use crate::events::WireRecord;
 use crate::plugins::common::debounce::Debouncer;
 use crate::plugins::common::event_key::event_key_hash;
@@ -643,6 +680,49 @@ mod tests {
             &mut last_drop,
         );
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn example_config_round_trips() {
+        // Guard against the example_config block in `info()` drifting
+        // out of sync with SystemNotifierConfig — every key in the
+        // snippet must deserialize cleanly through the same
+        // ConfigFile path users actually take.
+        let snippet = super::info().example_config;
+        let parsed: crate::event_config::schema::ConfigFile =
+            toml::from_str(snippet).expect("system_notifier example_config should parse");
+        let s = parsed
+            .plugins
+            .system_notifier
+            .expect("system_notifier table missing from example_config");
+        assert!(s.enabled_at_startup, "example_config sets enabled = true");
+        assert_eq!(s.conduit, "~/bin/notify.sh");
+        assert_eq!(s.debounce_ms, 5_000);
+        assert_eq!(s.conduit_timeout_ms, 5_000);
+        assert_eq!(
+            s.on,
+            vec!["RateLimited".to_string(), "ContextThreshold".to_string()]
+        );
+        assert_eq!(s.title, "abtop: {kind}");
+        assert_eq!(s.body, "{session_id}");
+    }
+
+    #[test]
+    fn info_description_distinguishes_from_notifier() {
+        let info = super::info();
+        // The description must lead with the conduit-binary
+        // differentiator so a user reading --list-plugins can tell
+        // it apart from `notifier` at a glance.
+        let desc_lower = info.description.to_lowercase();
+        assert!(
+            desc_lower.contains("user-supplied conduit") || desc_lower.contains("conduit binary"),
+            "description must lead with conduit differentiator: {}",
+            info.description
+        );
+        assert_eq!(info.name, "system_notifier");
+        assert_eq!(info.feature, "plugin-system-notifier");
+        assert!(info.default_on);
+        assert!(!info.startup_enabled);
     }
 
     #[test]

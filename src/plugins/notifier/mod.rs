@@ -131,9 +131,12 @@ pub fn info() -> crate::plugins::PluginInfo {
         feature: "plugin-notifier",
         default_on: true,
         startup_enabled: false,
-        description: "Dispatches desktop notifications when published events match \
-                      user-defined rules. Backends: osascript, notify-send, \
-                      terminal-notifier, or stderr fallback.",
+        description: "Built-in desktop notifications via compiled-in OS backends — \
+                      no user script required. Dispatches events that match \
+                      user-defined rules to osascript, notify-send, \
+                      terminal-notifier, or stderr fallback. For routing events \
+                      through a user-supplied conduit binary (notify.sh, ntfy, \
+                      curl, …), see `system_notifier`.",
         startup: "disabled by default. Enable with --plugin-notify or set \
                   `enabled = true` under [plugins.notifier] in \
                   ~/.config/abtop/config.toml.",

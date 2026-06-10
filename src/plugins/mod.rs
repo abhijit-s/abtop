@@ -29,6 +29,8 @@ use std::thread::JoinHandle;
 pub struct PluginsConfig {
     #[cfg(feature = "plugin-notifier")]
     pub notifier: notifier::NotifierConfig,
+    #[cfg(feature = "plugin-system-notifier")]
+    pub system_notifier: system_notifier::SystemNotifierConfig,
 }
 
 /// Result of [`PluginsConfig::build_registry`] — the registry itself
@@ -41,6 +43,10 @@ pub struct BuiltRegistry {
     /// notifier was started; `None` otherwise.
     #[cfg(feature = "plugin-notifier")]
     pub notifier_shared: Option<notifier::SharedNotifierConfig>,
+    /// Shared system_notifier config when the System Notifier was
+    /// started; `None` otherwise. Mirrors `notifier_shared`.
+    #[cfg(feature = "plugin-system-notifier")]
+    pub system_notifier_shared: Option<system_notifier::SharedSystemNotifierConfig>,
 }
 
 impl PluginsConfig {
@@ -55,6 +61,14 @@ impl PluginsConfig {
             if self.notifier.enabled_at_startup {
                 let plugin = notifier::Notifier::new(self.notifier.clone());
                 built.notifier_shared = Some(plugin.shared());
+                built.registry.start(plugin, socket_path.clone(), true);
+            }
+        }
+        #[cfg(feature = "plugin-system-notifier")]
+        {
+            if self.system_notifier.enabled_at_startup {
+                let plugin = system_notifier::SystemNotifier::new(self.system_notifier.clone());
+                built.system_notifier_shared = Some(plugin.shared());
                 built.registry.start(plugin, socket_path, true);
             }
         }
@@ -97,6 +111,10 @@ pub fn list_available() -> Vec<PluginInfo> {
     #[cfg(feature = "plugin-notifier")]
     {
         v.push(crate::plugins::notifier::info());
+    }
+    #[cfg(feature = "plugin-system-notifier")]
+    {
+        v.push(crate::plugins::system_notifier::info());
     }
     v
 }
@@ -404,6 +422,77 @@ mod tests {
     fn list_available_includes_notifier_when_feature_on() {
         let v = list_available();
         assert!(v.iter().any(|p| p.name == "notifier"));
+    }
+
+    #[cfg(feature = "plugin-system-notifier")]
+    #[test]
+    fn list_available_includes_system_notifier_when_feature_on() {
+        let v = list_available();
+        assert!(v.iter().any(|p| p.name == "system_notifier"));
+    }
+
+    #[cfg(all(feature = "plugin-notifier", feature = "plugin-system-notifier"))]
+    #[test]
+    fn list_available_descriptions_distinguish_plugins() {
+        // Make doubly sure the catalogue can be read by a user
+        // without confusion: each description must carry its own
+        // differentiator phrase.
+        let v = list_available();
+        let n = v.iter().find(|p| p.name == "notifier").unwrap();
+        let s = v.iter().find(|p| p.name == "system_notifier").unwrap();
+        assert!(
+            n.description.to_lowercase().contains("built-in"),
+            "notifier description must call out its built-in backends: {}",
+            n.description
+        );
+        assert!(
+            s.description.to_lowercase().contains("conduit"),
+            "system_notifier description must call out the conduit: {}",
+            s.description
+        );
+    }
+
+    #[cfg(feature = "plugin-system-notifier")]
+    #[test]
+    fn build_registry_starts_system_notifier_when_enabled() {
+        let cfg = PluginsConfig {
+            #[cfg(feature = "plugin-notifier")]
+            notifier: notifier::NotifierConfig::default(),
+            system_notifier: system_notifier::SystemNotifierConfig {
+                enabled_at_startup: true,
+                conduit: "/bin/true".to_string(),
+                ..Default::default()
+            },
+        };
+        let built = cfg.build_registry(PathBuf::from("/dev/null"));
+        assert!(
+            built.system_notifier_shared.is_some(),
+            "system_notifier_shared should be populated when started"
+        );
+        assert!(built.registry.names().contains(&"system_notifier"));
+        // The worker is connecting in the background to /dev/null,
+        // which fails — it backs off and retries until shutdown. The
+        // shutdown flag is observed at each backoff iteration.
+        built.registry.shutdown();
+    }
+
+    #[cfg(feature = "plugin-system-notifier")]
+    #[test]
+    fn build_registry_skips_system_notifier_when_disabled() {
+        let cfg = PluginsConfig {
+            #[cfg(feature = "plugin-notifier")]
+            notifier: notifier::NotifierConfig::default(),
+            system_notifier: system_notifier::SystemNotifierConfig {
+                enabled_at_startup: false,
+                ..Default::default()
+            },
+        };
+        let built = cfg.build_registry(PathBuf::from("/dev/null"));
+        assert!(
+            built.system_notifier_shared.is_none(),
+            "system_notifier should not be started when disabled"
+        );
+        built.registry.shutdown();
     }
 
     #[test]
