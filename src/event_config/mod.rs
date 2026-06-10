@@ -284,7 +284,51 @@ fn merge_overlay(base: &mut ConfigFile, next: ConfigFile) {
     #[cfg(not(feature = "plugin-notifier"))]
     {
         // Without the feature there's nothing to merge into.
-        let _ = next;
+        let _ = &next.plugins.notifier;
+    }
+
+    #[cfg(feature = "plugin-system-notifier")]
+    {
+        if let Some(overlay_sys) = next.plugins.system_notifier {
+            match base.plugins.system_notifier.as_mut() {
+                None => {
+                    base.plugins.system_notifier = Some(overlay_sys);
+                }
+                Some(existing) => {
+                    // Scalars override (single-conduit plugin — no list
+                    // fields to append).
+                    let default = crate::plugins::system_notifier::SystemNotifierConfig::default();
+                    if overlay_sys.enabled_at_startup != default.enabled_at_startup {
+                        existing.enabled_at_startup = overlay_sys.enabled_at_startup;
+                    }
+                    if !overlay_sys.conduit.is_empty() {
+                        existing.conduit = overlay_sys.conduit;
+                    }
+                    if !overlay_sys.conduit_args.is_empty() {
+                        existing.conduit_args = overlay_sys.conduit_args;
+                    }
+                    if !overlay_sys.on.is_empty() {
+                        existing.on = overlay_sys.on;
+                    }
+                    if overlay_sys.title != default.title {
+                        existing.title = overlay_sys.title;
+                    }
+                    if overlay_sys.body != default.body {
+                        existing.body = overlay_sys.body;
+                    }
+                    if overlay_sys.debounce_ms != default.debounce_ms {
+                        existing.debounce_ms = overlay_sys.debounce_ms;
+                    }
+                    if overlay_sys.conduit_timeout_ms != default.conduit_timeout_ms {
+                        existing.conduit_timeout_ms = overlay_sys.conduit_timeout_ms;
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(feature = "plugin-system-notifier"))]
+    {
+        let _ = next.plugins.system_notifier;
     }
 }
 
@@ -317,6 +361,21 @@ fn apply_to_loaded(loaded: &mut LoadedConfig, cf: ConfigFile) {
     #[cfg(not(feature = "plugin-notifier"))]
     {
         let _ = cf.plugins.notifier;
+    }
+
+    #[cfg(feature = "plugin-system-notifier")]
+    {
+        if let Some(s) = cf.plugins.system_notifier {
+            // Same generation-bump pattern as notifier so the worker
+            // observes hot-reload changes on its next loop iteration.
+            let mut wired = s;
+            wired.generation = wired.generation.wrapping_add(1);
+            loaded.plugins.system_notifier = wired;
+        }
+    }
+    #[cfg(not(feature = "plugin-system-notifier"))]
+    {
+        let _ = cf.plugins.system_notifier;
     }
 }
 

@@ -481,6 +481,8 @@ pub fn run() -> io::Result<()> {
     let plugin_handles = built_plugins.registry.control_handles();
     #[cfg(feature = "plugin-notifier")]
     let notifier_shared = built_plugins.notifier_shared.clone();
+    #[cfg(feature = "plugin-system-notifier")]
+    let system_notifier_shared = built_plugins.system_notifier_shared.clone();
 
     // Setup terminal
     enable_raw_mode()?;
@@ -503,6 +505,8 @@ pub fn run() -> io::Result<()> {
         plugin_handles,
         #[cfg(feature = "plugin-notifier")]
         notifier_shared,
+        #[cfg(feature = "plugin-system-notifier")]
+        system_notifier_shared,
     );
 
     // Stop plugin workers before tearing down the terminal so any
@@ -637,6 +641,9 @@ fn run_app(
     #[cfg(feature = "plugin-notifier")] notifier_shared: Option<
         crate::plugins::notifier::SharedNotifierConfig,
     >,
+    #[cfg(feature = "plugin-system-notifier")] system_notifier_shared: Option<
+        crate::plugins::system_notifier::SharedSystemNotifierConfig,
+    >,
 ) -> io::Result<()> {
     let mut app = App::new_with_config_and_claude_dirs(
         initial_theme,
@@ -652,6 +659,10 @@ fn run_app(
     #[cfg(feature = "plugin-notifier")]
     if let Some(shared) = notifier_shared {
         app.set_notifier_shared(shared);
+    }
+    #[cfg(feature = "plugin-system-notifier")]
+    if let Some(shared) = system_notifier_shared {
+        app.set_system_notifier_shared(shared);
     }
     if demo_mode {
         demo::populate_demo(&mut app);
