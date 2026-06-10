@@ -150,6 +150,12 @@ struct EventsCliFlags {
     socket_override: Option<String>,
     tcp_override: Option<String>,
     print_socket_path: bool,
+    /// `--plugin-notify` → start the notifier plugin at boot.
+    plugin_notify: bool,
+    /// `--no-plugin-notify` → explicit opt-out (wins over any future
+    /// config file). Tracked here so future config-loader code can
+    /// honor the CLI override.
+    no_plugin_notify: bool,
 }
 
 fn parse_events_cli_flags() -> EventsCliFlags {
@@ -172,6 +178,10 @@ fn parse_events_cli_flags() -> EventsCliFlags {
             }
         } else if a == "--print-socket-path" {
             out.print_socket_path = true;
+        } else if a == "--plugin-notify" {
+            out.plugin_notify = true;
+        } else if a == "--no-plugin-notify" {
+            out.no_plugin_notify = true;
         }
         i += 1;
     }
@@ -393,6 +403,11 @@ pub fn run() -> io::Result<()> {
             }
         };
 
+    // Build the plugin registry. Strict mode: --plugin-notify requires
+    // an enabled publisher. --no-plugin-notify wins over --plugin-notify
+    // if both appear (explicit-off beats explicit-on).
+    let plugins_registry = build_plugins_registry(&events_flags, &publisher);
+
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -412,6 +427,11 @@ pub fn run() -> io::Result<()> {
         publisher,
     );
 
+    // Stop plugin workers before tearing down the terminal so any
+    // last-second stderr they emit lands on the user's actual stderr,
+    // not on the alternate screen.
+    plugins_registry.shutdown();
+
     // Always attempt both cleanup steps regardless of app result
     let r1 = stdout().execute(DisableMouseCapture).map(|_| ());
     let r2 = disable_raw_mode();
@@ -419,6 +439,47 @@ pub fn run() -> io::Result<()> {
 
     // Return app error first, then cleanup errors
     app_result.and(r1).and(r2).and(r3)
+}
+
+/// Build the plugin registry from CLI flags + the resolved publisher.
+/// Strict mode: if `--plugin-notify` is set but the publisher ended
+/// up disabled, we refuse to spawn the worker and surface a clear
+/// stderr message.
+fn build_plugins_registry(
+    flags: &EventsCliFlags,
+    publisher: &std::sync::Arc<events::EventPublisher>,
+) -> plugins::PluginRegistry {
+    // Resolve user intent: explicit --no-plugin-notify wins.
+    let want_notifier = flags.plugin_notify && !flags.no_plugin_notify;
+    let socket_path = match publisher.socket_path() {
+        Some(p) => p.to_path_buf(),
+        None => {
+            if want_notifier {
+                eprintln!(
+                    "notifier: events publisher is disabled — start with --events to enable plugins"
+                );
+            }
+            return plugins::PluginRegistry::new();
+        }
+    };
+    #[allow(unused_mut)]
+    let mut cfg = plugins::PluginsConfig::default();
+    #[cfg(feature = "plugin-notifier")]
+    {
+        cfg.notifier.enabled_at_startup = want_notifier;
+        // U6 ships with an empty rule list — the user has no way to
+        // configure rules until the TOML loader lands in U7. The
+        // worker still connects and consumes events; it just has
+        // nothing to dispatch.
+        // TODO(u7-config): load `[plugins.notifier]` from abtop.toml.
+    }
+    #[cfg(not(feature = "plugin-notifier"))]
+    {
+        if want_notifier {
+            eprintln!("notifier: this build was compiled without --features plugin-notifier");
+        }
+    }
+    cfg.build_registry(socket_path)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -795,10 +856,35 @@ mod events_cli_tests {
                 }
             } else if a == "--print-socket-path" {
                 out.print_socket_path = true;
+            } else if a == "--plugin-notify" {
+                out.plugin_notify = true;
+            } else if a == "--no-plugin-notify" {
+                out.no_plugin_notify = true;
             }
             i += 1;
         }
         out
+    }
+
+    #[test]
+    fn plugin_notify_flag_sets_field() {
+        let f = parse(&["--plugin-notify"]);
+        assert!(f.plugin_notify);
+        assert!(!f.no_plugin_notify);
+    }
+
+    #[test]
+    fn no_plugin_notify_flag_sets_field() {
+        let f = parse(&["--no-plugin-notify"]);
+        assert!(!f.plugin_notify);
+        assert!(f.no_plugin_notify);
+    }
+
+    #[test]
+    fn both_plugin_notify_flags_recorded_separately() {
+        let f = parse(&["--plugin-notify", "--no-plugin-notify"]);
+        assert!(f.plugin_notify);
+        assert!(f.no_plugin_notify);
     }
 
     #[test]
