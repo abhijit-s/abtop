@@ -114,9 +114,7 @@ impl AppEvent {
 
     pub fn kind(&self) -> EventKind {
         match self {
-            AppEvent::SessionStarted { .. } | AppEvent::SessionEnded { .. } => {
-                EventKind::Lifecycle
-            }
+            AppEvent::SessionStarted { .. } | AppEvent::SessionEnded { .. } => EventKind::Lifecycle,
             AppEvent::StatusChanged { .. } => EventKind::Status,
             AppEvent::ContextThreshold { .. } | AppEvent::TokenRateSpike { .. } => {
                 EventKind::Threshold

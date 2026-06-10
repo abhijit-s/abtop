@@ -56,15 +56,39 @@ fn parse_hex(raw: &str) -> Option<Color> {
 fn is_known_key(key: &str) -> bool {
     matches!(
         key,
-        "main_bg" | "main_fg" | "title" | "hi_fg" | "selected_bg" | "selected_fg"
-        | "inactive_fg" | "graph_text" | "meter_bg" | "proc_misc" | "div_line"
-        | "session_id" | "status_fg" | "warning_fg" | "cpu_box" | "mem_box"
-        | "net_box" | "proc_box"
-        | "cpu_grad_start" | "cpu_grad_mid" | "cpu_grad_end"
-        | "proc_grad_start" | "proc_grad_mid" | "proc_grad_end"
-        | "used_grad_start" | "used_grad_mid" | "used_grad_end"
-        | "free_grad_start" | "free_grad_mid" | "free_grad_end"
-        | "cached_grad_start" | "cached_grad_mid" | "cached_grad_end"
+        "main_bg"
+            | "main_fg"
+            | "title"
+            | "hi_fg"
+            | "selected_bg"
+            | "selected_fg"
+            | "inactive_fg"
+            | "graph_text"
+            | "meter_bg"
+            | "proc_misc"
+            | "div_line"
+            | "session_id"
+            | "status_fg"
+            | "warning_fg"
+            | "cpu_box"
+            | "mem_box"
+            | "net_box"
+            | "proc_box"
+            | "cpu_grad_start"
+            | "cpu_grad_mid"
+            | "cpu_grad_end"
+            | "proc_grad_start"
+            | "proc_grad_mid"
+            | "proc_grad_end"
+            | "used_grad_start"
+            | "used_grad_mid"
+            | "used_grad_end"
+            | "free_grad_start"
+            | "free_grad_mid"
+            | "free_grad_end"
+            | "cached_grad_start"
+            | "cached_grad_mid"
+            | "cached_grad_end"
     )
 }
 
@@ -200,11 +224,31 @@ fn empty_theme() -> Theme {
         mem_box: Color::Reset,
         net_box: Color::Reset,
         proc_box: Color::Reset,
-        cpu_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
-        proc_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
-        used_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
-        free_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
-        cached_grad: crate::theme::Gradient { start: (0, 0, 0), mid: (0, 0, 0), end: (0, 0, 0) },
+        cpu_grad: crate::theme::Gradient {
+            start: (0, 0, 0),
+            mid: (0, 0, 0),
+            end: (0, 0, 0),
+        },
+        proc_grad: crate::theme::Gradient {
+            start: (0, 0, 0),
+            mid: (0, 0, 0),
+            end: (0, 0, 0),
+        },
+        used_grad: crate::theme::Gradient {
+            start: (0, 0, 0),
+            mid: (0, 0, 0),
+            end: (0, 0, 0),
+        },
+        free_grad: crate::theme::Gradient {
+            start: (0, 0, 0),
+            mid: (0, 0, 0),
+            end: (0, 0, 0),
+        },
+        cached_grad: crate::theme::Gradient {
+            start: (0, 0, 0),
+            mid: (0, 0, 0),
+            end: (0, 0, 0),
+        },
     }
 }
 
@@ -222,8 +266,8 @@ fn apply_body(theme: &mut Theme, body: &str) {
 /// the errors vec so the caller can surface them to the user.
 pub(crate) fn parse_theme_body_with_errors(body: &str, name: &str) -> (Theme, Vec<ParseError>) {
     let mut theme = empty_theme();
-    let btop_body = crate::theme::embedded::lookup("btop")
-        .expect("embedded btop is a build-time invariant");
+    let btop_body =
+        crate::theme::embedded::lookup("btop").expect("embedded btop is a build-time invariant");
     apply_body(&mut theme, btop_body);
 
     let mut errors = Vec::new();
@@ -342,8 +386,7 @@ pub fn list_available(config_root: &Path) -> Vec<ThemeListing> {
     };
     user_names.sort();
 
-    let user_set: std::collections::HashSet<&str> =
-        user_names.iter().map(|s| s.as_str()).collect();
+    let user_set: std::collections::HashSet<&str> = user_names.iter().map(|s| s.as_str()).collect();
     let builtin_set: std::collections::HashSet<&str> = crate::theme::embedded::BUILTIN
         .iter()
         .map(|(n, _)| *n)
@@ -432,9 +475,7 @@ pub fn dump_embedded(
 /// Use case: `--theme /tmp/scratch.theme` and similar one-shot iteration.
 /// The caller is responsible for skipping `save_theme` — this function
 /// only loads, it doesn't persist.
-pub(crate) fn load_from_path_with_errors(
-    path: &Path,
-) -> Result<(Theme, Vec<ParseError>), String> {
+pub(crate) fn load_from_path_with_errors(path: &Path) -> Result<(Theme, Vec<ParseError>), String> {
     let body = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let name = path
@@ -465,18 +506,15 @@ pub fn lookup_chain(config_root: &Path, name: &str) -> Option<Theme> {
 /// Like `lookup_chain` but also returns any parse errors encountered.
 /// Resolution order: user file → embedded → embedded btop (last resort).
 /// Always returns a Theme.
-pub(crate) fn lookup_chain_with_errors(
-    config_root: &Path,
-    name: &str,
-) -> (Theme, Vec<ParseError>) {
+pub(crate) fn lookup_chain_with_errors(config_root: &Path, name: &str) -> (Theme, Vec<ParseError>) {
     if let Some(body) = try_user_file_body(config_root, name) {
         return parse_theme_body_with_errors(&body, name);
     }
     if let Some(body) = crate::theme::embedded::lookup(name) {
         return parse_theme_body_with_errors(body, name);
     }
-    let body = crate::theme::embedded::lookup("btop")
-        .expect("embedded btop is a build-time invariant");
+    let body =
+        crate::theme::embedded::lookup("btop").expect("embedded btop is a build-time invariant");
     (parse_theme_body(body, "btop"), Vec::new())
 }
 
@@ -497,12 +535,8 @@ pub fn load_chain(config_root: &Path, name: &str) -> Theme {
 /// last-resort fallback to embedded `btop`, and return any parse errors
 /// encountered. Config-level overrides are applied before returning.
 /// Always returns a Theme.
-pub(crate) fn load_or_default_with_errors(
-    name: &str,
-    cfg: &AppConfig,
-) -> (Theme, Vec<ParseError>) {
-    let (mut theme, errors) =
-        lookup_chain_with_errors(&crate::config::xdg_config_dir(), name);
+pub(crate) fn load_or_default_with_errors(name: &str, cfg: &AppConfig) -> (Theme, Vec<ParseError>) {
+    let (mut theme, errors) = lookup_chain_with_errors(&crate::config::xdg_config_dir(), name);
     apply_overrides(&mut theme, cfg);
     (theme, errors)
 }
@@ -700,7 +734,10 @@ theme[cached_grad_end]="#616263"
             if *name != "btop" {
                 // A non-btop theme that parses identically to btop (apart from name)
                 // means its file was empty / unparseable.
-                let renamed_btop = Theme { name: name.to_string(), ..btop_baseline.clone() };
+                let renamed_btop = Theme {
+                    name: name.to_string(),
+                    ..btop_baseline.clone()
+                };
                 assert_ne!(
                     t, renamed_btop,
                     "embedded '{name}' parsed identically to btop — file may be empty or all keys unrecognized"
@@ -711,15 +748,23 @@ theme[cached_grad_end]="#616263"
 
     #[test]
     fn theme_names_const_matches_embedded_in_order() {
-        let embedded: Vec<&str> = crate::theme::embedded::BUILTIN.iter().map(|(n, _)| *n).collect();
+        let embedded: Vec<&str> = crate::theme::embedded::BUILTIN
+            .iter()
+            .map(|(n, _)| *n)
+            .collect();
         let listed: Vec<&str> = crate::theme::THEME_NAMES.to_vec();
-        assert_eq!(embedded, listed, "THEME_NAMES drifted from embedded::BUILTIN");
+        assert_eq!(
+            embedded, listed,
+            "THEME_NAMES drifted from embedded::BUILTIN"
+        );
     }
 
     #[test]
     fn theme_names_const_includes_all_embedded() {
-        let embedded_set: std::collections::HashSet<&str> =
-            crate::theme::embedded::BUILTIN.iter().map(|(n, _)| *n).collect();
+        let embedded_set: std::collections::HashSet<&str> = crate::theme::embedded::BUILTIN
+            .iter()
+            .map(|(n, _)| *n)
+            .collect();
         for name in embedded_set {
             assert!(
                 crate::theme::THEME_NAMES.contains(&name),
@@ -777,11 +822,7 @@ theme[cached_grad_end]="#616263"
     fn lookup_chain_returns_some_for_user_dir_name() {
         let tmp = TempDir::new().unwrap();
         let themes_dir = tmp.path().join("abtop").join("themes");
-        write_theme_file(
-            &themes_dir,
-            "my-custom",
-            r##"theme[main_fg]="#abcdef""##,
-        );
+        write_theme_file(&themes_dir, "my-custom", r##"theme[main_fg]="#abcdef""##);
         let t = lookup_chain(tmp.path(), "my-custom").unwrap();
         assert_eq!(t.name, "my-custom");
         assert_eq!(t.main_fg, Color::Rgb(0xab, 0xcd, 0xef));
@@ -807,7 +848,10 @@ theme[cached_grad_end]="#616263"
 
     #[test]
     fn theme_listing_basics() {
-        let l = ThemeListing { name: "btop".to_string(), source: Source::Builtin };
+        let l = ThemeListing {
+            name: "btop".to_string(),
+            source: Source::Builtin,
+        };
         assert_eq!(l.name, "btop");
         assert_eq!(l.source, Source::Builtin);
 
@@ -866,7 +910,10 @@ theme[cached_grad_end]="#616263"
             .find(|l| l.name == "catppuccin")
             .expect("catppuccin present");
         assert_eq!(catppuccin.source, Source::UserOverride);
-        let pos = listings.iter().position(|l| l.name == "catppuccin").unwrap();
+        let pos = listings
+            .iter()
+            .position(|l| l.name == "catppuccin")
+            .unwrap();
         let builtin_pos = crate::theme::embedded::BUILTIN
             .iter()
             .position(|(n, _)| *n == "catppuccin")
@@ -927,11 +974,13 @@ theme[cached_grad_end]="#616263"
 
         assert_eq!(
             path,
-            tmp.path().join("abtop").join("themes").join("catppuccin.theme")
+            tmp.path()
+                .join("abtop")
+                .join("themes")
+                .join("catppuccin.theme")
         );
         let body = std::fs::read_to_string(&path).unwrap();
-        let embedded = crate::theme::embedded::lookup("catppuccin")
-            .expect("catppuccin in BUILTIN");
+        let embedded = crate::theme::embedded::lookup("catppuccin").expect("catppuccin in BUILTIN");
         assert_eq!(body, embedded);
     }
 
@@ -1062,15 +1111,39 @@ theme[cached_grad_end]="#616263"
     #[test]
     fn is_known_key_matches_all_33_keys() {
         let known = [
-            "main_bg", "main_fg", "title", "hi_fg", "selected_bg", "selected_fg",
-            "inactive_fg", "graph_text", "meter_bg", "proc_misc", "div_line",
-            "session_id", "status_fg", "warning_fg", "cpu_box", "mem_box",
-            "net_box", "proc_box",
-            "cpu_grad_start", "cpu_grad_mid", "cpu_grad_end",
-            "proc_grad_start", "proc_grad_mid", "proc_grad_end",
-            "used_grad_start", "used_grad_mid", "used_grad_end",
-            "free_grad_start", "free_grad_mid", "free_grad_end",
-            "cached_grad_start", "cached_grad_mid", "cached_grad_end",
+            "main_bg",
+            "main_fg",
+            "title",
+            "hi_fg",
+            "selected_bg",
+            "selected_fg",
+            "inactive_fg",
+            "graph_text",
+            "meter_bg",
+            "proc_misc",
+            "div_line",
+            "session_id",
+            "status_fg",
+            "warning_fg",
+            "cpu_box",
+            "mem_box",
+            "net_box",
+            "proc_box",
+            "cpu_grad_start",
+            "cpu_grad_mid",
+            "cpu_grad_end",
+            "proc_grad_start",
+            "proc_grad_mid",
+            "proc_grad_end",
+            "used_grad_start",
+            "used_grad_mid",
+            "used_grad_end",
+            "free_grad_start",
+            "free_grad_mid",
+            "free_grad_end",
+            "cached_grad_start",
+            "cached_grad_mid",
+            "cached_grad_end",
         ];
         assert_eq!(known.len(), 33);
         for k in known {
@@ -1129,7 +1202,10 @@ theme[cached_grad_end]="#616263"
         let (_, errors) = parse_theme_body_with_errors(body, "test");
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 1);
-        assert_eq!(errors[0].reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+        assert_eq!(
+            errors[0].reason,
+            ParseErrorReason::InvalidHex("#XYZ".to_string())
+        );
     }
 
     #[test]
@@ -1148,7 +1224,9 @@ theme[cached_grad_end]="#616263"
         let body = "theme[main_bg]=missing_quote\ntheme[main_bg";
         let (_, errors) = parse_theme_body_with_errors(body, "test");
         assert_eq!(errors.len(), 2);
-        assert!(errors.iter().all(|e| e.reason == ParseErrorReason::Malformed));
+        assert!(errors
+            .iter()
+            .all(|e| e.reason == ParseErrorReason::Malformed));
     }
 
     #[test]
@@ -1205,7 +1283,10 @@ theme[cached_grad_end]="#616263"
         let (theme, errors) = lookup_chain_with_errors(tmp.path(), "broken");
         assert_eq!(theme.name, "broken");
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+        assert_eq!(
+            errors[0].reason,
+            ParseErrorReason::InvalidHex("#XYZ".to_string())
+        );
     }
 
     #[test]
@@ -1229,11 +1310,13 @@ theme[cached_grad_end]="#616263"
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("broken.theme");
         std::fs::write(&path, r##"theme[main_bg]="#XYZ""##).unwrap();
-        let (theme, errors) = load_from_path_with_errors(&path)
-            .expect("file exists, so Ok");
+        let (theme, errors) = load_from_path_with_errors(&path).expect("file exists, so Ok");
         assert_eq!(theme.name, "broken");
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].reason, ParseErrorReason::InvalidHex("#XYZ".to_string()));
+        assert_eq!(
+            errors[0].reason,
+            ParseErrorReason::InvalidHex("#XYZ".to_string())
+        );
     }
 
     #[test]

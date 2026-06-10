@@ -352,10 +352,7 @@ mod tests {
 
     #[test]
     fn xdg_config_dir_inner_falls_back_to_home_when_env_empty() {
-        let result = xdg_config_dir_inner(
-            Some(String::new()),
-            Some(PathBuf::from("/home/user")),
-        );
+        let result = xdg_config_dir_inner(Some(String::new()), Some(PathBuf::from("/home/user")));
         assert_eq!(result, PathBuf::from("/home/user/.config"));
     }
 

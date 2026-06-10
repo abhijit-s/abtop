@@ -31,11 +31,8 @@ use std::collections::{HashMap, HashSet};
 ///
 /// Each row is `(bucket, fire_at, clear_below)`. Buckets are independent
 /// — see plan "Decisions resolved (2026-06-10)" item 3.
-pub const CONTEXT_BUCKETS: &[(u8, f64, f64)] = &[
-    (70, 70.0, 65.0),
-    (90, 90.0, 85.0),
-    (95, 95.0, 90.0),
-];
+pub const CONTEXT_BUCKETS: &[(u8, f64, f64)] =
+    &[(70, 70.0, 65.0), (90, 90.0, 85.0), (95, 95.0, 90.0)];
 
 /// Multiplier above the rolling baseline for `TokenRateSpike`. Cleared
 /// when the rate falls back below `SPIKE_CLEAR_MULTIPLIER * baseline`.
@@ -132,10 +129,16 @@ fn diff_sessions(
     next: &Snapshot,
     out: &mut Vec<AppEvent>,
 ) {
-    let prev_by_id: HashMap<&str, &SessionView> =
-        prev.sessions.iter().map(|s| (s.session_id.as_str(), s)).collect();
-    let next_by_id: HashMap<&str, &SessionView> =
-        next.sessions.iter().map(|s| (s.session_id.as_str(), s)).collect();
+    let prev_by_id: HashMap<&str, &SessionView> = prev
+        .sessions
+        .iter()
+        .map(|s| (s.session_id.as_str(), s))
+        .collect();
+    let next_by_id: HashMap<&str, &SessionView> = next
+        .sessions
+        .iter()
+        .map(|s| (s.session_id.as_str(), s))
+        .collect();
 
     // SessionStarted: in next, not in prev.
     for (id, view) in &next_by_id {
@@ -190,7 +193,11 @@ fn diff_context_thresholds(
         let pct = session.context_percent;
         for (bucket, fire_at, clear_below) in CONTEXT_BUCKETS {
             let key = (session.session_id.clone(), *bucket);
-            let was_armed = state.context_bucket_armed.get(&key).copied().unwrap_or(false);
+            let was_armed = state
+                .context_bucket_armed
+                .get(&key)
+                .copied()
+                .unwrap_or(false);
             if !was_armed && pct >= *fire_at {
                 out.push(AppEvent::ContextThreshold {
                     session_id: session.session_id.clone(),
@@ -465,7 +472,8 @@ mod tests {
     fn session_started_when_id_appears() {
         let prev = empty_snapshot();
         let mut next = empty_snapshot();
-        next.sessions.push(session("s1", SessionStatus::Thinking, 0.0));
+        next.sessions
+            .push(session("s1", SessionStatus::Thinking, 0.0));
         let mut state = EventDifferState::new();
         let events = diff(&mut state, &prev, &next, true, 0);
         assert_eq!(events.len(), 1);
@@ -478,7 +486,8 @@ mod tests {
     #[test]
     fn session_ended_when_id_disappears() {
         let mut prev = empty_snapshot();
-        prev.sessions.push(session("s1", SessionStatus::Thinking, 0.0));
+        prev.sessions
+            .push(session("s1", SessionStatus::Thinking, 0.0));
         let next = empty_snapshot();
         let mut state = EventDifferState::new();
         let events = diff(&mut state, &prev, &next, true, 0);
@@ -492,9 +501,11 @@ mod tests {
     #[test]
     fn status_changed_when_status_differs() {
         let mut prev = empty_snapshot();
-        prev.sessions.push(session("s1", SessionStatus::Thinking, 0.0));
+        prev.sessions
+            .push(session("s1", SessionStatus::Thinking, 0.0));
         let mut next = empty_snapshot();
-        next.sessions.push(session("s1", SessionStatus::Executing, 0.0));
+        next.sessions
+            .push(session("s1", SessionStatus::Executing, 0.0));
         let mut state = EventDifferState::new();
         let events = diff(&mut state, &prev, &next, true, 0);
         assert_eq!(events.len(), 1);
@@ -511,9 +522,11 @@ mod tests {
     fn context_bucket_ladder_climb_emits_three_events() {
         // 60 → 96 must emit three events (70, 90, 95) in one diff.
         let mut prev = empty_snapshot();
-        prev.sessions.push(session("s1", SessionStatus::Thinking, 60.0));
+        prev.sessions
+            .push(session("s1", SessionStatus::Thinking, 60.0));
         let mut next = empty_snapshot();
-        next.sessions.push(session("s1", SessionStatus::Thinking, 96.0));
+        next.sessions
+            .push(session("s1", SessionStatus::Thinking, 96.0));
         let mut state = EventDifferState::new();
         // Prime baseline so the 60% prev doesn't count.
         state.context_bucket_armed.insert(("s1".into(), 70), false);
@@ -537,18 +550,21 @@ mod tests {
         let mut state = EventDifferState::new();
         let prev_a = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 60.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 60.0));
             s
         };
         let next_a = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 96.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 96.0));
             s
         };
         let _e1 = diff(&mut state, &prev_a, &next_a, false, 0);
         let next_b = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 92.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 92.0));
             s
         };
         let e2 = diff(&mut state, &next_a, &next_b, false, 0);
@@ -565,22 +581,29 @@ mod tests {
         let mut state = EventDifferState::new();
         let s_60 = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 60.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 60.0));
             s
         };
         let s_80 = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 80.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 80.0));
             s
         };
         let e1 = diff(&mut state, &s_60, &s_80, false, 0);
         assert_eq!(e1.len(), 1);
         let e2 = diff(&mut state, &s_80, &s_60, false, 0);
         // Going down doesn't emit context events.
-        assert!(e2.iter().all(|e| !matches!(e, AppEvent::ContextThreshold { .. })));
+        assert!(e2
+            .iter()
+            .all(|e| !matches!(e, AppEvent::ContextThreshold { .. })));
         let e3 = diff(&mut state, &s_60, &s_80, false, 0);
         assert_eq!(e3.len(), 1);
-        assert!(matches!(e3[0], AppEvent::ContextThreshold { bucket: 70, .. }));
+        assert!(matches!(
+            e3[0],
+            AppEvent::ContextThreshold { bucket: 70, .. }
+        ));
     }
 
     #[test]
@@ -590,17 +613,20 @@ mod tests {
         let mut state = EventDifferState::new();
         let s_60 = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 60.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 60.0));
             s
         };
         let s_88 = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 88.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 88.0));
             s
         };
         let s_96 = {
             let mut s = empty_snapshot();
-            s.sessions.push(session("s1", SessionStatus::Thinking, 96.0));
+            s.sessions
+                .push(session("s1", SessionStatus::Thinking, 96.0));
             s
         };
         // 60 → 88: emits 70 only (88 < 90, so 90/95 don't fire).
@@ -648,7 +674,10 @@ mod tests {
         });
         let mut state = EventDifferState::new();
         let events_fast = diff(&mut state, &prev, &next, false, 0);
-        assert!(events_fast.is_empty(), "slow tier must not emit on fast tick");
+        assert!(
+            events_fast.is_empty(),
+            "slow tier must not emit on fast tick"
+        );
 
         prev.rate_limits.push(RateLimitInfo {
             source: "claude".into(),
@@ -701,7 +730,9 @@ mod tests {
         }
         // Re-running with still-limited state should NOT re-fire.
         let e2 = diff(&mut state, &limited, &limited, true, 0);
-        assert!(e2.iter().all(|e| !matches!(e, AppEvent::RateLimited { .. })));
+        assert!(e2
+            .iter()
+            .all(|e| !matches!(e, AppEvent::RateLimited { .. })));
         let e3 = diff(&mut state, &limited, &unlimited, true, 0);
         assert!(e3
             .iter()
@@ -746,10 +777,14 @@ mod tests {
         let mut state = EventDifferState::new();
         // First diff: empty -> a, appears.
         let e1 = diff(&mut state, &b, &a, true, 0);
-        assert!(e1.iter().any(|e| matches!(e, AppEvent::McpServerAppeared { .. })));
+        assert!(e1
+            .iter()
+            .any(|e| matches!(e, AppEvent::McpServerAppeared { .. })));
         // Second diff: a -> empty, vanishes.
         let e2 = diff(&mut state, &a, &b, true, 0);
-        assert!(e2.iter().any(|e| matches!(e, AppEvent::McpServerVanished { pid: 7 })));
+        assert!(e2
+            .iter()
+            .any(|e| matches!(e, AppEvent::McpServerVanished { pid: 7 })));
     }
 
     #[test]
@@ -768,22 +803,29 @@ mod tests {
         let _ = diff(&mut state, &mk(0.5), &mk(2.0), false, 0);
         // Crosses: fires.
         let e1 = diff(&mut state, &mk(2.0), &mk(4.5), false, 0);
-        assert!(e1.iter().any(|e| matches!(e, AppEvent::HostLoadHigh { .. })));
+        assert!(e1
+            .iter()
+            .any(|e| matches!(e, AppEvent::HostLoadHigh { .. })));
         // Stays high: no re-fire.
         let e2 = diff(&mut state, &mk(4.5), &mk(4.7), false, 0);
-        assert!(e2.iter().all(|e| !matches!(e, AppEvent::HostLoadHigh { .. })));
+        assert!(e2
+            .iter()
+            .all(|e| !matches!(e, AppEvent::HostLoadHigh { .. })));
         // Drops below clear: silently clears (no event for clearing).
         let _ = diff(&mut state, &mk(4.7), &mk(2.0), false, 0);
         // Re-crosses: fires again.
         let e4 = diff(&mut state, &mk(2.0), &mk(4.5), false, 0);
-        assert!(e4.iter().any(|e| matches!(e, AppEvent::HostLoadHigh { .. })));
+        assert!(e4
+            .iter()
+            .any(|e| matches!(e, AppEvent::HostLoadHigh { .. })));
     }
 
     #[test]
     fn tool_called_emits_for_new_tail_items() {
         let mut state = EventDifferState::new();
         let mut prev = empty_snapshot();
-        prev.sessions.push(session("s1", SessionStatus::Thinking, 0.0));
+        prev.sessions
+            .push(session("s1", SessionStatus::Thinking, 0.0));
         let mut next = empty_snapshot();
         let mut s = session("s1", SessionStatus::Thinking, 0.0);
         s.tool_calls.push(ToolCallView {
@@ -814,7 +856,8 @@ mod tests {
     fn compaction_detected_on_increment() {
         let mut state = EventDifferState::new();
         let mut prev = empty_snapshot();
-        prev.sessions.push(session("s1", SessionStatus::Thinking, 0.0));
+        prev.sessions
+            .push(session("s1", SessionStatus::Thinking, 0.0));
         let mut next = empty_snapshot();
         let mut s = session("s1", SessionStatus::Thinking, 0.0);
         s.compaction_count = 1;
@@ -834,12 +877,18 @@ mod tests {
     fn session_ended_purges_detector_state() {
         let mut state = EventDifferState::new();
         let mut s_present = empty_snapshot();
-        s_present.sessions.push(session("s1", SessionStatus::Thinking, 80.0));
+        s_present
+            .sessions
+            .push(session("s1", SessionStatus::Thinking, 80.0));
         let s_absent = empty_snapshot();
 
         // Arm bucket 70.
         let _ = diff(&mut state, &empty_snapshot(), &s_present, false, 0);
-        assert!(state.context_bucket_armed.get(&("s1".into(), 70)).copied().unwrap_or(false));
+        assert!(state
+            .context_bucket_armed
+            .get(&("s1".into(), 70))
+            .copied()
+            .unwrap_or(false));
 
         // Session vanishes -> state purged.
         let _ = diff(&mut state, &s_present, &s_absent, true, 0);

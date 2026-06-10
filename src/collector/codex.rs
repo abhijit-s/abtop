@@ -207,9 +207,7 @@ impl CodexCollector {
             Self::sort_rollouts_by_mtime_desc(&mut desktop_rollout_paths);
 
             for path in desktop_rollout_paths {
-                let pid = desktop_pid_for_path
-                    .get(&path)
-                    .copied();
+                let pid = desktop_pid_for_path.get(&path).copied();
                 let process_ctx = CodexProcessContext {
                     pid,
                     is_exec: false,
@@ -1741,11 +1739,9 @@ mod tests {
     #[test]
     fn desktop_filesystem_only_rollout_is_unknown_without_fd_owner() {
         let sessions = tempfile::tempdir().unwrap();
-        let today = sessions.path().join(
-            chrono::Local::now()
-                .format("%Y/%m/%d")
-                .to_string(),
-        );
+        let today = sessions
+            .path()
+            .join(chrono::Local::now().format("%Y/%m/%d").to_string());
         fs::create_dir_all(&today).unwrap();
         let active = today.join("rollout-active.jsonl");
         write_jsonl(&active, &[DESKTOP_SESSION_META]);

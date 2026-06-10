@@ -97,7 +97,10 @@ mod tests {
     fn validates_path_length() {
         let short = Path::new("/tmp/x.sock");
         assert!(validate_sun_path_length(short).is_ok());
-        let long: String = "/tmp/".chars().chain(std::iter::repeat('a').take(150)).collect();
+        let long: String = "/tmp/"
+            .chars()
+            .chain(std::iter::repeat('a').take(150))
+            .collect();
         let err = validate_sun_path_length(Path::new(&long)).unwrap_err();
         assert!(err.contains("ABTOP_EVENTS_SOCKET"));
     }
