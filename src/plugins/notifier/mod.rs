@@ -775,8 +775,8 @@ mod tests {
         let snippet = super::info().example_config;
         // The snippet uses `[plugins.notifier]`, so parse via
         // ConfigFile to exercise the full path users actually take.
-        let parsed: crate::event_config::schema::ConfigFile = toml::from_str(snippet)
-            .expect("notifier example_config should parse as ConfigFile");
+        let parsed: crate::event_config::schema::ConfigFile =
+            toml::from_str(snippet).expect("notifier example_config should parse as ConfigFile");
         let n = parsed
             .plugins
             .notifier

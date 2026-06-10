@@ -8,8 +8,13 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+
+// Re-exports of primitives that used to live in this file but now sit
+// under `plugins::common`. Keeping the re-exports preserves
+// `notifier::rules::Debouncer` / `notifier::rules::event_key_hash`
+// callsites unchanged.
+pub use crate::plugins::common::debounce::Debouncer;
+pub use crate::plugins::common::event_key::event_key_hash;
 
 /// One user-defined rule. Field names mirror the TOML / serde layout
 /// described in the design doc.
@@ -243,86 +248,6 @@ pub fn matches(rule: &CompiledRule, type_name: &str, ctx: &Value) -> bool {
     }
 }
 
-/// Stable hash for the event's identity. Picks the first available
-/// "key" field in priority order. The hash itself is small + fast
-/// (FNV-1a) — collisions are fine because the rule index already
-/// participates in the debounce key.
-pub fn event_key_hash(ctx: &Value) -> u64 {
-    let obj = match ctx.as_object() {
-        Some(o) => o,
-        None => return 0,
-    };
-    for key in ["session_id", "provider", "port", "pid"] {
-        if let Some(v) = obj.get(key) {
-            return fnv1a(v.to_string().as_bytes());
-        }
-    }
-    0
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01B3;
-    let mut h = OFFSET;
-    for b in bytes {
-        h ^= *b as u64;
-        h = h.wrapping_mul(PRIME);
-    }
-    h
-}
-
-/// Tracks last-fired timestamps for `(rule_idx, key_hash)` pairs.
-/// Garbage-collects when the map exceeds 1024 entries by dropping
-/// anything older than `10 × max_debounce`.
-#[derive(Debug, Default)]
-pub struct Debouncer {
-    last: HashMap<(usize, u64), Instant>,
-    max_debounce_ms: u64,
-}
-
-impl Debouncer {
-    pub fn new(max_debounce_ms: u64) -> Self {
-        Self {
-            last: HashMap::new(),
-            max_debounce_ms,
-        }
-    }
-
-    /// Returns true iff the event should fire (i.e. either it's the
-    /// first time for this key or the last fire was longer ago than
-    /// `effective_ms`).
-    pub fn allow(&mut self, key: (usize, u64), effective_ms: u64) -> bool {
-        self.note_max(effective_ms);
-        let now = Instant::now();
-        let allow = match self.last.get(&key) {
-            None => true,
-            Some(prev) => {
-                now.saturating_duration_since(*prev) >= Duration::from_millis(effective_ms)
-            }
-        };
-        if allow {
-            self.last.insert(key, now);
-            self.gc(now);
-        }
-        allow
-    }
-
-    fn note_max(&mut self, ms: u64) {
-        if ms > self.max_debounce_ms {
-            self.max_debounce_ms = ms;
-        }
-    }
-
-    fn gc(&mut self, now: Instant) {
-        if self.last.len() <= 1024 {
-            return;
-        }
-        let horizon = Duration::from_millis(self.max_debounce_ms.saturating_mul(10).max(60_000));
-        self.last
-            .retain(|_, t| now.saturating_duration_since(*t) < horizon);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,31 +390,5 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].disabled);
         assert!(out[0].disable_reason.is_some());
-    }
-
-    #[test]
-    fn debouncer_blocks_within_window() {
-        let mut d = Debouncer::new(1000);
-        assert!(d.allow((0, 1), 1000));
-        // Second call within the window — blocked.
-        assert!(!d.allow((0, 1), 1000));
-    }
-
-    #[test]
-    fn debouncer_separates_keys() {
-        let mut d = Debouncer::new(1000);
-        assert!(d.allow((0, 1), 1000));
-        // Different rule_idx or key_hash -> independent.
-        assert!(d.allow((1, 1), 1000));
-        assert!(d.allow((0, 2), 1000));
-    }
-
-    #[test]
-    fn event_key_hash_prefers_session_id() {
-        let h1 = event_key_hash(&json!({"session_id": "abc", "provider": "claude"}));
-        let h2 = event_key_hash(&json!({"session_id": "abc", "provider": "openai"}));
-        let h3 = event_key_hash(&json!({"session_id": "xyz", "provider": "claude"}));
-        assert_eq!(h1, h2);
-        assert_ne!(h1, h3);
     }
 }

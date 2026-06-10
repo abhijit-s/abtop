@@ -12,6 +12,7 @@
 //! Panic isolation: each plugin's worker is wrapped in `catch_unwind`
 //! at the call site that drives it. Panics terminate only the thread.
 
+pub mod common;
 #[cfg(feature = "plugin-notifier")]
 pub mod notifier;
 
@@ -101,7 +102,10 @@ pub fn list_available() -> Vec<PluginInfo> {
 /// Render the plugin catalogue. Generic over `Write` so tests can
 /// capture output into a `Vec<u8>`; the CLI handler passes
 /// `&mut std::io::stdout().lock()`.
-pub fn print_catalogue<W: std::io::Write>(out: &mut W, plugins: &[PluginInfo]) -> std::io::Result<()> {
+pub fn print_catalogue<W: std::io::Write>(
+    out: &mut W,
+    plugins: &[PluginInfo],
+) -> std::io::Result<()> {
     if plugins.is_empty() {
         writeln!(out, "No plugins compiled into this binary.")?;
         writeln!(
@@ -161,7 +165,11 @@ fn write_wrapped<W: std::io::Write>(
     let mut first = true;
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let extra = if line.is_empty() { word.len() } else { line.len() + 1 + word.len() };
+        let extra = if line.is_empty() {
+            word.len()
+        } else {
+            line.len() + 1 + word.len()
+        };
         if extra > WIDTH && !line.is_empty() {
             if first {
                 writeln!(out, "{prefix}{line}")?;
