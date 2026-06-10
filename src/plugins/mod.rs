@@ -12,10 +12,42 @@
 //! Panic isolation: each plugin's worker is wrapped in `catch_unwind`
 //! at the call site that drives it. Panics terminate only the thread.
 
+#[cfg(feature = "plugin-notifier")]
+pub mod notifier;
+
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+
+/// Aggregated plugin-config struct. U7 will populate this from a TOML
+/// loader; U6 lands the shape so the registry has a stable build entry.
+#[derive(Clone, Debug, Default)]
+pub struct PluginsConfig {
+    #[cfg(feature = "plugin-notifier")]
+    pub notifier: notifier::NotifierConfig,
+}
+
+impl PluginsConfig {
+    /// Build a registry from this config + an events socket path.
+    /// Spawns one worker per enabled plugin. Plugins that are
+    /// disabled-at-startup are NOT spawned at all (no idle thread).
+    #[allow(unused_variables, unused_mut)]
+    pub fn build_registry(&self, socket_path: PathBuf) -> PluginRegistry {
+        let mut registry = PluginRegistry::new();
+        #[cfg(feature = "plugin-notifier")]
+        {
+            if self.notifier.enabled_at_startup {
+                registry.start(
+                    notifier::Notifier::new(self.notifier.clone()),
+                    socket_path,
+                    true,
+                );
+            }
+        }
+        registry
+    }
+}
 
 /// Trait implemented by each compiled-in plugin.
 pub trait Plugin: Send + 'static {
@@ -60,12 +92,7 @@ impl PluginRegistry {
 
     /// Start `plugin` against the given socket path. The plugin's
     /// `enabled` flag defaults to `enabled_default`.
-    pub fn start<P: Plugin>(
-        &mut self,
-        plugin: P,
-        socket_path: PathBuf,
-        enabled_default: bool,
-    ) {
+    pub fn start<P: Plugin>(&mut self, plugin: P, socket_path: PathBuf, enabled_default: bool) {
         let enabled = Arc::new(AtomicBool::new(enabled_default));
         let ctx = PluginCtx {
             socket_path,
@@ -81,8 +108,7 @@ impl PluginRegistry {
     pub fn set_enabled(&self, name: &str, on: bool) -> bool {
         for h in &self.handles {
             if h.name == name {
-                h.enabled
-                    .store(on, std::sync::atomic::Ordering::Relaxed);
+                h.enabled.store(on, std::sync::atomic::Ordering::Relaxed);
                 return true;
             }
         }

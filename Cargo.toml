@@ -13,6 +13,13 @@ readme = "README.md"
 authors = ["Tae Hwan Jung <nlkey2022@gmail.com>"]
 exclude = ["assets/*", "assets/**/*"]
 
+[features]
+default = ["plugin-notifier"]
+# Compile the in-process Notifier reference plugin. Disable with
+# `cargo build --no-default-features` to ship a minimal binary that
+# doesn't carry the notifier worker.
+plugin-notifier = []
+
 [dependencies]
 ratatui = "0.29"
 crossterm = "0.28"
