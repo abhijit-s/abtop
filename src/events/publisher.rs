@@ -88,12 +88,15 @@ impl EventPublisher {
         crate::events::socket_path::validate_sun_path_length(path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
-        // Refuse any path that still contains an unresolved `${...}`
+        // Refuse any path that still contains an unresolved `${NAME}`
         // placeholder. Catches typos in unknown variable names (e.g.
         // `${XGD_RUNTIME_DIR}`) so we don't end up creating literal
         // `${...}` directories at the `create_dir_all` call below.
+        // The grammar mirrors `event_config::interpolation::expand_with`
+        // so any `${` not forming a real placeholder (e.g. a legitimate
+        // filename containing `${` without a closing `}`) is allowed.
         if let Some(s) = path.to_str() {
-            if s.contains("${") {
+            if crate::event_config::interpolation::contains_unresolved_placeholder(s) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!(

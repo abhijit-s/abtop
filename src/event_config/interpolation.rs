@@ -93,6 +93,35 @@ where
     input.to_string()
 }
 
+/// True iff `s` contains a substring matching the interpolation
+/// placeholder grammar `${NAME}` where `NAME` is non-empty. Mirrors
+/// what [`expand_with`] treats as a placeholder, so anything that
+/// layer leaves verbatim (unknown var name, etc.) is detectable here
+/// and can be rejected at bind time.
+///
+/// Returns `false` for:
+/// - `${` with no closing `}` (e.g. `/tmp/file-with-${-in-name`)
+/// - `${}` (empty name)
+/// - plain text containing `$` or `{` in isolation
+///
+/// This is deliberately stricter than `s.contains("${")` so paths
+/// that legitimately include `${` without forming a placeholder are
+/// allowed through.
+pub fn contains_unresolved_placeholder(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let limit = bytes.len().saturating_sub(1);
+    for i in 0..limit {
+        if bytes[i] == b'$' && bytes[i + 1] == b'{' {
+            if let Some(rel_end) = s.get(i + 2..).and_then(|tail| tail.find('}')) {
+                if rel_end > 0 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Process-default expansion. Reads `${UID}` from the running process
 /// (via `libc::getuid` on Linux, `id -u` on macOS) and the environment
 /// for everything else.
@@ -274,5 +303,54 @@ mod tests {
             run("/tmp/${UID/x", &[], Some("501"), Some("/h")).as_deref(),
             Some("/tmp/${UID/x")
         );
+    }
+
+    mod placeholder_detection {
+        use super::super::contains_unresolved_placeholder;
+
+        #[test]
+        fn detects_simple_placeholders() {
+            assert!(contains_unresolved_placeholder("${UID}"));
+            assert!(contains_unresolved_placeholder("${X}"));
+            assert!(contains_unresolved_placeholder("/tmp/${FOO}.sock"));
+            assert!(contains_unresolved_placeholder("${UNRESOLVED}/abtop.sock"));
+        }
+
+        #[test]
+        fn detects_anywhere_in_string() {
+            assert!(contains_unresolved_placeholder("prefix${MID}suffix"));
+            assert!(contains_unresolved_placeholder("${A}${B}"));
+            assert!(contains_unresolved_placeholder("a${MID}"));
+            assert!(contains_unresolved_placeholder("${MID}z"));
+        }
+
+        #[test]
+        fn allows_dollar_brace_without_closing() {
+            // The user's concern: a legitimate path may contain `${`
+            // without forming a placeholder. Allow it.
+            assert!(!contains_unresolved_placeholder(
+                "/tmp/file-with-${-in-name"
+            ));
+            assert!(!contains_unresolved_placeholder("${"));
+            assert!(!contains_unresolved_placeholder("$"));
+            assert!(!contains_unresolved_placeholder("prefix${"));
+        }
+
+        #[test]
+        fn allows_empty_braces() {
+            // `${}` has no name — not a placeholder, just oddly-shaped text.
+            assert!(!contains_unresolved_placeholder("${}"));
+            assert!(!contains_unresolved_placeholder("/tmp/${}/x"));
+        }
+
+        #[test]
+        fn allows_plain_text() {
+            assert!(!contains_unresolved_placeholder(""));
+            assert!(!contains_unresolved_placeholder("/tmp/abtop.sock"));
+            assert!(!contains_unresolved_placeholder("$"));
+            assert!(!contains_unresolved_placeholder("$$"));
+            assert!(!contains_unresolved_placeholder("{}"));
+            assert!(!contains_unresolved_placeholder("plain ascii text"));
+        }
     }
 }
