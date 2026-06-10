@@ -26,13 +26,18 @@ use crate::plugins::{Plugin, PluginCtx, PluginHandle};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use backend::Backend;
 use rules::{compile, event_key_hash, matches, CompiledRule, Debouncer};
 
 const DEFAULT_DEBOUNCE_MS: u64 = 5_000;
+
+/// Shared, mutable handle to a [`NotifierConfig`]. The notifier worker
+/// holds this and re-reads it under a short read-lock per line so the
+/// config loader can hot-swap rules without restarting the plugin.
+pub type SharedNotifierConfig = Arc<RwLock<NotifierConfig>>;
 
 fn default_debounce() -> u64 {
     DEFAULT_DEBOUNCE_MS
@@ -57,6 +62,12 @@ pub struct NotifierConfig {
     /// User-defined matching rules.
     #[serde(default)]
     pub rule: Vec<rules::Rule>,
+    /// Monotonic generation counter — bumped by the config loader each
+    /// time the rule list, debounce window, or backend changes so the
+    /// worker can re-compile its rules without diffing every field.
+    /// Skipped by serde so it never appears in user TOML.
+    #[serde(skip)]
+    pub generation: u64,
 }
 
 impl Default for NotifierConfig {
@@ -66,6 +77,7 @@ impl Default for NotifierConfig {
             backend: None,
             debounce_ms: DEFAULT_DEBOUNCE_MS,
             rule: Vec::new(),
+            generation: 0,
         }
     }
 }
@@ -98,13 +110,34 @@ where
 }
 
 /// The plugin type that's registered with the [`crate::plugins::PluginRegistry`].
+///
+/// Holds a [`SharedNotifierConfig`] handle rather than an owned config
+/// so the U7 config loader can mutate rules / debounce / backend at
+/// runtime without restarting the worker thread.
 pub struct Notifier {
-    pub config: NotifierConfig,
+    pub config: SharedNotifierConfig,
 }
 
 impl Notifier {
+    /// Construct from an owned config (the common case — wraps in an
+    /// `Arc<RwLock<_>>`).
     pub fn new(config: NotifierConfig) -> Self {
+        Self {
+            config: Arc::new(RwLock::new(config)),
+        }
+    }
+
+    /// Construct from an existing shared handle. The hot-reload path
+    /// uses this so the registry and the loader share the same
+    /// `Arc<RwLock<_>>`.
+    pub fn from_shared(config: SharedNotifierConfig) -> Self {
         Self { config }
+    }
+
+    /// Borrow the shared config handle (used by `App::apply_event_config`
+    /// to mutate rules in place).
+    pub fn shared(&self) -> SharedNotifierConfig {
+        Arc::clone(&self.config)
     }
 }
 
@@ -114,12 +147,12 @@ impl Plugin for Notifier {
     }
 
     fn start(&self, ctx: PluginCtx) -> PluginHandle {
-        let cfg = self.config.clone();
+        let shared = Arc::clone(&self.config);
         let enabled_for_handle = Arc::clone(&ctx.enabled);
         let join = std::thread::Builder::new()
             .name("abtop-notifier".into())
             .spawn(move || {
-                run(ctx, cfg);
+                run(ctx, shared);
             })
             .expect("spawn abtop-notifier thread");
         PluginHandle {
@@ -133,9 +166,25 @@ impl Plugin for Notifier {
 /// Worker entry point. Loops over (connect → read → dispatch) until
 /// shutdown. Errors at any layer demote to "drop the stream and back
 /// off"; the only exit path is `ctx.shutdown`.
-fn run(ctx: PluginCtx, cfg: NotifierConfig) {
-    let backend = Backend::probe(cfg.backend.clone());
-    let compiled = compile(cfg.rule.clone());
+///
+/// The worker re-compiles rules whenever the shared config's
+/// `generation` counter advances — the config loader bumps this when
+/// rules, debounce, or backend change at runtime.
+fn run(ctx: PluginCtx, shared: SharedNotifierConfig) {
+    // Snapshot the initial config under the read lock so we don't
+    // hold the lock across `Backend::probe` (which may shell out).
+    let (initial_backend_pref, initial_rules, initial_debounce_ms, mut last_generation) = {
+        let cfg = shared.read().expect("notifier config lock poisoned");
+        (
+            cfg.backend.clone(),
+            cfg.rule.clone(),
+            cfg.debounce_ms,
+            cfg.generation,
+        )
+    };
+    let mut backend = Backend::probe(initial_backend_pref);
+    let mut compiled = compile(initial_rules);
+    let mut default_debounce_ms = initial_debounce_ms;
     for r in compiled.iter().filter(|r| r.disabled) {
         eprintln!(
             "notifier: rule #{} disabled — invalid `when`: {}",
@@ -143,7 +192,7 @@ fn run(ctx: PluginCtx, cfg: NotifierConfig) {
             r.disable_reason.as_deref().unwrap_or("(no reason)")
         );
     }
-    let mut debouncer = Debouncer::new(cfg.debounce_ms);
+    let mut debouncer = Debouncer::new(default_debounce_ms);
     let mut backoff = Duration::from_millis(200);
     let backoff_cap = Duration::from_secs(5);
 
@@ -158,10 +207,12 @@ fn run(ctx: PluginCtx, cfg: NotifierConfig) {
         process_stream(
             stream,
             &ctx,
-            &backend,
-            &compiled,
+            &shared,
+            &mut backend,
+            &mut compiled,
+            &mut default_debounce_ms,
+            &mut last_generation,
             &mut debouncer,
-            cfg.debounce_ms,
         );
 
         // Stream ended (EOF, error, or shutdown). If shutdown, the
@@ -175,6 +226,38 @@ fn run(ctx: PluginCtx, cfg: NotifierConfig) {
         // Grow backoff in case the next connect also fails — capped.
         backoff = (backoff * 2).min(backoff_cap);
     }
+}
+
+/// Re-read the shared config if its generation counter advanced. Cheap
+/// when nothing changed (a single read-lock + u64 compare). Updates
+/// `compiled`, `default_debounce_ms`, and `backend` in place when a
+/// new generation is observed.
+fn refresh_if_changed(
+    shared: &SharedNotifierConfig,
+    backend: &mut Backend,
+    compiled: &mut Vec<CompiledRule>,
+    default_debounce_ms: &mut u64,
+    last_generation: &mut u64,
+) {
+    let (new_backend_pref, new_rules, new_debounce_ms, new_gen) = {
+        let cfg = match shared.read() {
+            Ok(c) => c,
+            Err(_) => return, // lock poisoned — skip; next read may recover
+        };
+        if cfg.generation == *last_generation {
+            return;
+        }
+        (
+            cfg.backend.clone(),
+            cfg.rule.clone(),
+            cfg.debounce_ms,
+            cfg.generation,
+        )
+    };
+    *compiled = compile(new_rules);
+    *default_debounce_ms = new_debounce_ms;
+    *backend = Backend::probe(new_backend_pref);
+    *last_generation = new_gen;
 }
 
 #[cfg(unix)]
@@ -210,13 +293,16 @@ fn connect_with_shutdown(_ctx: &PluginCtx, _initial: &Duration) -> Option<std::f
 }
 
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 fn process_stream(
     stream: std::os::unix::net::UnixStream,
     ctx: &PluginCtx,
-    backend: &Backend,
-    rules: &[CompiledRule],
+    shared: &SharedNotifierConfig,
+    backend: &mut Backend,
+    rules: &mut Vec<CompiledRule>,
+    default_debounce_ms: &mut u64,
+    last_generation: &mut u64,
     debouncer: &mut Debouncer,
-    default_debounce_ms: u64,
 ) {
     let reader = BufReader::new(stream);
     for line in reader.lines() {
@@ -231,28 +317,34 @@ fn process_stream(
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
+                refresh_if_changed(shared, backend, rules, default_debounce_ms, last_generation);
                 continue;
             }
             Err(_) => return, // hangup; the outer loop reconnects
         };
+        // Cheap hot-reload check before dispatching.
+        refresh_if_changed(shared, backend, rules, default_debounce_ms, last_generation);
         if line.is_empty() {
             continue;
         }
         if !ctx.enabled.load(Ordering::Relaxed) {
             continue; // pause: discard while paused
         }
-        handle_line(&line, backend, rules, debouncer, default_debounce_ms);
+        handle_line(&line, backend, rules, debouncer, *default_debounce_ms);
     }
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::too_many_arguments)]
 fn process_stream(
     _stream: std::fs::File,
     _ctx: &PluginCtx,
-    _backend: &Backend,
-    _rules: &[CompiledRule],
+    _shared: &SharedNotifierConfig,
+    _backend: &mut Backend,
+    _rules: &mut Vec<CompiledRule>,
+    _default_debounce_ms: &mut u64,
+    _last_generation: &mut u64,
     _debouncer: &mut Debouncer,
-    _default_debounce_ms: u64,
 ) {
 }
 
@@ -401,6 +493,7 @@ mod tests {
                 body: "{from} -> {to}".into(),
                 debounce_ms: None,
             }],
+            generation: 0,
         };
 
         let mut registry = PluginRegistry::new();
@@ -459,6 +552,7 @@ mod tests {
                 body: String::new(),
                 debounce_ms: None,
             }],
+            generation: 0,
         };
 
         let mut registry = PluginRegistry::new();
@@ -495,6 +589,7 @@ mod tests {
                 body: "y".into(),
                 debounce_ms: None,
             }],
+            generation: 0,
         };
 
         let mut registry = PluginRegistry::new();
@@ -569,6 +664,65 @@ mod tests {
         let snap = sink.snapshot();
         assert_eq!(snap[0].0, "ses X");
         assert_eq!(snap[0].1, "Thinking Executing");
+    }
+
+    #[test]
+    fn hot_reload_updates_rules_via_shared_handle() {
+        // Start the worker with a no-match rule list, then swap in a
+        // matching rule via the shared `Arc<RwLock<NotifierConfig>>`.
+        // Bumping `generation` is the signal the worker observes to
+        // recompile, so dispatches that previously didn't match now
+        // fire.
+        let path = tmp_sock_path("hot");
+        let publisher = EventPublisher::bind_uds(&path).expect("bind publisher");
+
+        let sink = backend::CaptureSink::new();
+        let initial = NotifierConfig {
+            enabled_at_startup: true,
+            backend: Some(Backend::Capture(sink.clone())),
+            debounce_ms: 0,
+            rule: vec![rules::Rule {
+                on: vec!["NeverFiresEventKind".into()],
+                when: None,
+                title: "no".into(),
+                body: "match".into(),
+                debounce_ms: None,
+            }],
+            generation: 0,
+        };
+        let notifier = Notifier::new(initial);
+        let shared = notifier.shared();
+
+        let mut registry = PluginRegistry::new();
+        registry.start(notifier, path.clone(), true);
+        assert!(wait_for_conns(&publisher, 1, Duration::from_secs(3)) >= 1);
+
+        // Baseline: no rule matches StatusChanged, so nothing dispatched.
+        publisher.publish(&[status_changed("A")]);
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(sink.len(), 0, "no rule should match initially");
+
+        // Hot-swap the rule list to one that matches, bump generation.
+        {
+            let mut cfg = shared.write().expect("write lock");
+            cfg.rule = vec![rules::Rule {
+                on: vec!["StatusChanged".into()],
+                when: None,
+                title: "hot {session_id}".into(),
+                body: "live".into(),
+                debounce_ms: None,
+            }];
+            cfg.generation = cfg.generation.wrapping_add(1);
+        }
+
+        publisher.publish(&[status_changed("B")]);
+        let got = wait_for_records(&sink, 1, Duration::from_secs(3));
+        assert!(got >= 1, "expected dispatch after rule swap, got {got}");
+        let snap = sink.snapshot();
+        assert_eq!(snap.last().unwrap().0, "hot B");
+
+        registry.shutdown();
+        drop(publisher);
     }
 
     // Silence the unused-import lint when the file is built without
