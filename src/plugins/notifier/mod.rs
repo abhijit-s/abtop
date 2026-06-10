@@ -48,8 +48,9 @@ fn default_debounce() -> u64 {
 #[derive(Clone, Debug, Deserialize)]
 pub struct NotifierConfig {
     /// Start the worker at process start. CLI override:
-    /// `--plugin-notify` / `--no-plugin-notify`.
-    #[serde(default)]
+    /// `--plugin-notify` / `--no-plugin-notify`. The `enabled` TOML
+    /// alias matches the spec wording for `[plugins.notifier]`.
+    #[serde(default, alias = "enabled")]
     pub enabled_at_startup: bool,
     /// Preferred backend, or `None` for auto. `"auto"` in TOML maps to
     /// `None` (see [`backend_deser`]).
@@ -88,24 +89,27 @@ fn backend_deser<'de, D>(de: D) -> Result<Option<Backend>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    // The untagged enum tries variants in declaration order — listing
+    // `Backend(Backend)` first means the named variants ("stderr",
+    // "osascript", …) succeed via Backend's own Deserialize and we
+    // only fall through to the string-catch-all for `"auto"` or any
+    // unrecognized name.
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Repr {
-        Auto(String),
         Backend(Backend),
+        Auto(String),
     }
     let r = Option::<Repr>::deserialize(de)?;
     Ok(match r {
         None => None,
+        Some(Repr::Backend(b)) => Some(b),
         Some(Repr::Auto(s)) if s == "auto" => None,
         Some(Repr::Auto(s)) => {
-            // Try to reparse — Repr::Auto only catches strings the
-            // Backend enum rejected. Surface a clearer error.
             return Err(serde::de::Error::custom(format!(
                 "unknown backend '{s}' — valid: osascript, notify-send, terminal-notifier, stderr, auto"
             )));
         }
-        Some(Repr::Backend(b)) => Some(b),
     })
 }
 

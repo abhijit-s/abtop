@@ -55,6 +55,7 @@ pub mod app;
 pub mod collector;
 pub mod config;
 pub mod demo;
+pub mod event_config;
 pub mod events;
 pub mod host_info;
 pub mod locale;
