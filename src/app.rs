@@ -836,7 +836,7 @@ impl App {
     /// Set the source file watched by `App::tick` for mid-session reload.
     /// Called by `build_app` at startup with the resolved theme's path
     /// + initial mtime. `None` disables polling (used for embedded-only
-    /// themes that have no file backing).
+    ///   themes that have no file backing).
     pub(crate) fn set_theme_source(&mut self, source: Option<ThemeSource>) {
         self.theme_source = source;
     }

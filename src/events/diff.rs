@@ -361,7 +361,9 @@ fn diff_rate_limits(
     let to_clear: Vec<String> = state
         .rate_limit_armed
         .iter()
-        .filter_map(|(k, &armed)| (armed && !seen.contains(k)).then(|| k.clone()))
+        .filter(|(_, &armed)| armed)
+        .filter(|(k, _)| !seen.contains(*k))
+        .map(|(k, _)| k.clone())
         .collect();
     for provider in to_clear {
         out.push(AppEvent::RateLimitCleared {

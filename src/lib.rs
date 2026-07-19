@@ -276,7 +276,7 @@ pub fn run() -> io::Result<()> {
             Some(n) if !n.starts_with('-') => n,
             _ => {
                 eprintln!("--dump-theme requires a theme name");
-                let available: Vec<&str> = theme::THEME_NAMES.iter().copied().collect();
+                let available: Vec<&str> = theme::THEME_NAMES.to_vec();
                 eprintln!("available: {}", available.join(", "));
                 std::process::exit(1);
             }
