@@ -1,3 +1,4 @@
+use super::context_window_for_model;
 use super::process::{self, ProcInfo};
 use crate::model::{
     AgentSession, ChatMessage, ChatRole, ChildProcess, FileAccess, FileOp, SessionFile,
@@ -1892,20 +1893,6 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-fn context_window_for_model(
-    transcript_model: &str,
-    configured_model: &str,
-    max_context_tokens: u64,
-) -> u64 {
-    if transcript_model.contains("[1m]")
-        || configured_model.contains("[1m]")
-        || max_context_tokens > 200_000
-    {
-        1_000_000
-    } else {
-        200_000
-    }
-}
 
 /// Returns the ordered list of Claude Code settings files to check, from
 /// highest to lowest priority, matching Claude Code's own resolution order:
@@ -2052,14 +2039,17 @@ mod tests {
     }
 
     fn write_session_file(path: &Path, pid: u32, session_id: &str, cwd: &Path) {
+        // Serialize via serde_json so Windows backslash paths are escaped
+        // correctly instead of producing invalid JSON.
         std::fs::write(
             path,
-            format!(
-                r#"{{"pid":{},"sessionId":"{}","cwd":"{}","startedAt":1774715116826}}"#,
-                pid,
-                session_id,
-                cwd.display()
-            ),
+            serde_json::json!({
+                "pid": pid,
+                "sessionId": session_id,
+                "cwd": cwd.to_str().unwrap(),
+                "startedAt": 1774715116826u64,
+            })
+            .to_string(),
         )
         .unwrap();
     }
@@ -3115,22 +3105,22 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
         );
         // Explicit [1m] suffix in transcript model → 1M regardless of token count
         assert_eq!(
-            context_window_for_model("claude-opus-4-6[1m]", "", 0),
+            crate::collector::context_window_for_model("claude-opus-4-6[1m]", "", 0),
             1_000_000
         );
         // [1m] in configured model (from settings.json) → 1M even if transcript lacks it
         assert_eq!(
-            context_window_for_model("claude-sonnet-4-6", "sonnet[1m]", 0),
+            crate::collector::context_window_for_model("claude-sonnet-4-6", "sonnet[1m]", 0),
             1_000_000
         );
         assert_eq!(
-            context_window_for_model("claude-sonnet-4-6", "", 100_000),
+            crate::collector::context_window_for_model("claude-sonnet-4-6", "", 100_000),
             200_000
         );
-        assert_eq!(context_window_for_model("unknown-model", "", 0), 200_000);
+        assert_eq!(crate::collector::context_window_for_model("unknown-model", "", 0), 200_000);
         // Token usage exceeds 200K → must be 1M window
         assert_eq!(
-            context_window_for_model("claude-opus-4-6", "", 250_000),
+            crate::collector::context_window_for_model("claude-opus-4-6", "", 250_000),
             1_000_000
         );
     }

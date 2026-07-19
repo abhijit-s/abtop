@@ -20,6 +20,9 @@ All read-only. No API keys. No auth.
 
 ### macOS / Linux
 
+> [!IMPORTANT]
+> On Linux, ensure `sqlite3` is installed to enable monitoring for OpenCode sessions.
+
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/graykode/abtop/releases/latest/download/abtop-installer.sh | sh
 ```
@@ -32,7 +35,7 @@ cargo install abtop
 
 ### Windows
 
-Native support — no WSL required. Uses `sysinfo` for process info and `netstat -ano` for listening ports.
+Native support — no WSL required. Uses `sysinfo` for process info and host CPU/MEM metrics, and `netstat -ano` for listening ports. Windows has no load average, so LOAD is reported as 0. OpenCode session discovery additionally requires the `sqlite3` CLI (`winget install SQLite.SQLite`); without it abtop prints a one-time warning to stderr.
 
 ```powershell
 powershell -c "irm https://github.com/graykode/abtop/releases/latest/download/abtop-installer.ps1 | iex"
@@ -53,13 +56,15 @@ abtop --json             # Print one JSON snapshot and exit (for scripts/tools)
 abtop --setup            # Install rate limit collection hook
 abtop --theme dracula    # Launch with a specific theme
 abtop --theme /tmp/x.theme   # Or load a theme file directly (one-shot, not saved)
+abtop --mouse            # Enable mouse click/scroll navigation
 ```
 
 Recommended terminal size: **120x40** or larger. Minimum 80x24 — panels hide gracefully when small.
+Mouse capture is off by default so terminal drag selection and copy keep working. Launch with `--mouse` if you prefer click targets and wheel navigation.
 
-### tmux
+### Terminal Jump
 
-abtop works standalone, but running inside tmux unlocks session jumping — press `Enter` to switch directly to the pane running that agent.
+Press `Enter` to focus the terminal running the selected agent. abtop supports cmux, tmux, and iTerm2 on macOS.
 
 ```bash
 tmux new -s work
@@ -194,7 +199,7 @@ indicators, not the window background).
 | Subagents         |     ✅      |    ❌     |    ❌    |
 | Memory Status     |     ✅      |    ❌     |    ❌    |
 
-OpenCode support reads the local SQLite database at `~/.local/share/opencode/opencode.db` and requires `sqlite3` in `PATH`.
+OpenCode support reads the local SQLite database at `~/.local/share/opencode/opencode.db` (also the default location on Windows; `%LOCALAPPDATA%\opencode` and `%APPDATA%\opencode` are probed as fallbacks) and requires `sqlite3` in `PATH` (on Windows: `winget install SQLite.SQLite`).
 
 ## Themes
 
@@ -255,7 +260,7 @@ When `language` is unset, abtop auto-detects from `LANG` — any value starting 
 | Key                | Action                               |
 | ------------------ | ------------------------------------ |
 | `↑`/`↓` or `k`/`j` | Select session                       |
-| `Enter`            | Jump to session terminal (tmux only) |
+| `Enter`            | Jump to session terminal             |
 | `x`                | Kill selected session                |
 | `X`                | Kill all orphan ports                |
 | `t`                | Cycle theme                          |

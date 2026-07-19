@@ -138,6 +138,22 @@ pub struct SharedProcessData {
     pub desktop_rollout_fd_map: HashMap<u32, Vec<PathBuf>>,
 }
 
+/// Context window size for this model (e.g. 200K, 1M).
+pub(crate) fn context_window_for_model(
+    transcript_model: &str,
+    configured_model: &str,
+    max_context_tokens: u64,
+) -> u64 {
+    if transcript_model.contains("[1m]")
+        || configured_model.contains("[1m]")
+        || max_context_tokens > 200_000
+    {
+        1_000_000
+    } else {
+        200_000
+    }
+}
+
 impl SharedProcessData {
     /// Fetch process info every tick, but reuse cached ports when `cached_ports` is provided.
     pub fn fetch(cached_ports: Option<&HashMap<u32, Vec<u16>>>, slow_tick: bool) -> Self {

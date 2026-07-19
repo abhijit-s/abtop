@@ -62,7 +62,6 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         return;
     }
 
-    let has_tmux = std::env::var("TMUX").is_ok();
     let compact = area.width <= 80;
     let ultra_compact = area.width <= 70;
 
@@ -73,7 +72,7 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Style::default().fg(theme.main_fg),
         ),
     ];
-    if has_tmux && !ultra_compact {
+    if !ultra_compact {
         spans.push(Span::styled("↵", Style::default().fg(theme.hi_fg)));
         spans.push(Span::styled(
             format!(" {} ", t("footer.jump")),
@@ -263,7 +262,14 @@ pub(crate) fn truncate_middle(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::draw_footer;
     use super::truncate_middle;
+    use crate::app::App;
+    use crate::config::PanelVisibility;
+    use crate::theme::Theme;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    use ratatui::Terminal;
 
     #[test]
     fn truncate_middle_returns_original_when_short() {
@@ -291,5 +297,34 @@ mod tests {
     #[test]
     fn truncate_middle_unit_max_is_ellipsis() {
         assert_eq!(truncate_middle("hello", 1), "…");
+    }
+
+    #[test]
+    fn footer_renders_concise_cmux_socket_failure() {
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
+        app.set_status("cmux: socket broken; restart cmux".to_string());
+
+        let backend = TestBackend::new(120, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_footer(
+                    f,
+                    &app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 120,
+                        height: 1,
+                    },
+                    &app.theme,
+                )
+            })
+            .unwrap();
+        let text = format!("{}", terminal.backend());
+
+        assert!(text.contains("cmux: socket broken; restart cmux"));
+        assert!(!text.contains("Broken pipe"));
+        assert!(!text.contains("select-workspace"));
     }
 }
