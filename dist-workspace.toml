@@ -18,9 +18,10 @@ hosting = "github"
 # Whether to install an updater program
 install-updater = false
 # Homebrew formula is generated as a release asset by the `homebrew`
-# installer above, but we do NOT auto-publish it to a tap. Instead the
-# generated `abtop.rb` is downloaded after each release and committed
-# to `Formula/abtop.rb` in this repo. Users tap via the URL form:
-#   brew tap abhijit-s/abtop https://github.com/abhijit-s/abtop
-# This keeps the release flow PAT-free and avoids cross-repo pushes.
+# installer above, but we do NOT auto-publish it to a tap (that would need
+# a cross-repo PAT). Instead the generated `abtop.rb` is downloaded after
+# each release and manually committed to Formula/abtop.rb in
+# abhijit-s/homebrew-tap. Users tap via:
+#   brew tap abhijit-s/tap
+#   brew install abtop
 publish-jobs = []

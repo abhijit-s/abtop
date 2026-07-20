@@ -573,10 +573,18 @@ cargo clippy                   # Lint
    gh run list --workflow Release --limit 5
    gh run list --workflow "Publish to crates.io" --limit 5
    ```
-6. `release.yml` builds platform binaries, creates the GitHub Release, and updates the Homebrew formula.
+6. `release.yml` builds platform binaries, creates the GitHub Release, and attaches a generated `abtop.rb` Homebrew formula as a release asset.
 7. `publish.yml` runs `cargo publish` to crates.io automatically.
+8. Download the generated formula and push it to the canonical tap (manual, PAT-free by design):
+   ```bash
+   gh release download vX.Y.Z -R abhijit-s/abtop -p 'abtop.rb' -O /tmp/abtop.rb --clobber
+   # in a clone of abhijit-s/homebrew-tap:
+   cp /tmp/abtop.rb Formula/abtop.rb
+   git commit -am "abtop X.Y.Z" && git push
+   ```
 
 **Do NOT run `cargo publish` or `gh release create` manually** — the CI workflows handle both.
+**Homebrew install path is `abhijit-s/homebrew-tap`** (`brew tap abhijit-s/tap && brew install abtop`) — there is no self-tap in this repo.
 **Do NOT push the tag before the version bump is on `main`.**
 **Do NOT reuse a release tag after a failed publish; bump to a new patch version instead.**
 
