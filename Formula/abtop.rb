@@ -1,25 +1,25 @@
 class Abtop < Formula
   desc "AI agent monitor for your terminal"
   homepage "https://github.com/abhijit-s/abtop"
-  version "0.6.0"
+  version "0.6.2"
   if OS.mac?
     if Hardware::CPU.arm?
-      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.0/abtop-aarch64-apple-darwin.tar.xz"
-      sha256 "49b4f13b0206a9dc3317da74c9a3d83ba0f2ab949f041ee3f156ba358722c06f"
+      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.2/abtop-aarch64-apple-darwin.tar.xz"
+      sha256 "313c49252dbd7003132bf47108801455ada0bd0e611af41df7ed8d76e081ac18"
     end
     if Hardware::CPU.intel?
-      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.0/abtop-x86_64-apple-darwin.tar.xz"
-      sha256 "7c96711ddd27826102a94068a32cd67a4bb40964951e0eaafb0dd0204cbe2b55"
+      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.2/abtop-x86_64-apple-darwin.tar.xz"
+      sha256 "e81bc916b94051d9e509e59e64808779bba2e6897ffe85a7dacead0caa6c6a08"
     end
   end
   if OS.linux?
     if Hardware::CPU.arm?
-      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.0/abtop-aarch64-unknown-linux-gnu.tar.xz"
-      sha256 "c9f9728c0b6b1ec510fdf4246f01dabfb16bc3f8e7d4686da3a8a053ef3b7079"
+      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.2/abtop-aarch64-unknown-linux-gnu.tar.xz"
+      sha256 "bcebde827824203d97b2ad0e2912a1d10c0d8394133678011dd2705039abac0f"
     end
     if Hardware::CPU.intel?
-      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.0/abtop-x86_64-unknown-linux-gnu.tar.xz"
-      sha256 "a8711c5b0c755e32df472c714aa04ced9958943393931e45e8a929342ab4dc7b"
+      url "https://github.com/abhijit-s/abtop/releases/download/v0.6.2/abtop-x86_64-unknown-linux-gnu.tar.xz"
+      sha256 "c3d671f4e970e11b5f261bbc38d8d7e4e9d002fa48cb99d792c0480266a1f6f3"
     end
   end
   license "MIT"
