@@ -1,8 +1,8 @@
 use super::context_window_for_model;
 use super::process::{self, ProcInfo};
 use crate::model::{
-    AgentSession, ChatMessage, ChatRole, ChildProcess, FileAccess, FileOp, SessionFile,
-    SessionStatus, SubAgent, MAX_CHAT_MESSAGES, MAX_FILE_ACCESSES,
+    AgentSession, ChatMessage, ChatRole, ChildProcess, FileAccess, FileOp, LaunchSurface,
+    SessionFile, SessionStatus, SubAgent, MAX_CHAT_MESSAGES, MAX_FILE_ACCESSES,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -265,6 +265,36 @@ impl ClaudeCollector {
         pids
     }
 
+    /// Classify which surface launched a `claude` process, from the resolved
+    /// executable path in its full command line (as reported by `ps`/
+    /// `/proc/{pid}/cmdline`/sysinfo — see `process::ProcInfo::command`).
+    ///
+    /// - The Claude desktop app bundles its own Claude Code binary under a
+    ///   per-user `Claude/claude-code/<version>/` directory (Electron's
+    ///   userData layout: `~/Library/Application Support/Claude/...` on
+    ///   macOS, `%APPDATA%\Claude\...` on Windows, `~/.config/Claude/...`
+    ///   on Linux) — distinct from a plain PATH install.
+    /// - Editor extensions (VS Code, Cursor, Windsurf, ...) vendor the
+    ///   binary under `<editor-extensions-dir>/anthropic.claude-code-<ver>/`.
+    /// - Anything else (homebrew/npm/native install, the auto-updater's
+    ///   `claude/versions/<ver>` layout) is a plain CLI invocation.
+    fn detect_launch_surface(cmd: &str) -> LaunchSurface {
+        // Match against the whole command string rather than the first
+        // whitespace-split token: unlike `cmd_has_binary`'s binary-name
+        // check, these are fixed path fragments with no ambiguity, and the
+        // desktop app's own path already contains an unquoted space
+        // ("Application Support") on macOS that a naive first-token split
+        // would cut through.
+        let normalized = cmd.replace('\\', "/");
+        if normalized.contains("/Claude/claude-code/") {
+            LaunchSurface::App
+        } else if normalized.contains("/extensions/anthropic.claude-code") {
+            LaunchSurface::Ide
+        } else {
+            LaunchSurface::Cli
+        }
+    }
+
     fn map_pid_to_open_paths(pids: &[u32]) -> HashMap<u32, ProcessOpenPaths> {
         if pids.is_empty() {
             return HashMap::new();
@@ -344,6 +374,9 @@ impl ClaudeCollector {
         let pid_alive = proc_cmd
             .map(|c| process::cmd_has_binary(c, "claude"))
             .unwrap_or(false);
+        let launch_surface = proc_cmd
+            .map(Self::detect_launch_surface)
+            .unwrap_or(LaunchSurface::Cli);
 
         // Skip sessions whose PID is a descendant of abtop itself —
         // those are the `claude --print` summary children spawned by
@@ -644,6 +677,7 @@ impl ClaudeCollector {
 
         Some(AgentSession {
             agent_cli: "claude",
+            launch_surface,
             pid: sf.pid,
             session_id: sf.session_id,
             cwd: sf.cwd,
@@ -2034,6 +2068,60 @@ fn read_env_var_from_proc(_pid: u32, _var_name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    // ---- detect_launch_surface ----
+
+    #[test]
+    fn detect_launch_surface_desktop_app_macos() {
+        let cmd = "/Users/a/Library/Application Support/Claude/claude-code/2.1.266/claude.app/Contents/MacOS/claude";
+        assert_eq!(
+            ClaudeCollector::detect_launch_surface(cmd),
+            LaunchSurface::App
+        );
+    }
+
+    #[test]
+    fn detect_launch_surface_desktop_app_windows_backslashes() {
+        let cmd = r#"C:\Users\a\AppData\Roaming\Claude\claude-code\2.1.266\claude.exe"#;
+        assert_eq!(
+            ClaudeCollector::detect_launch_surface(cmd),
+            LaunchSurface::App
+        );
+    }
+
+    #[test]
+    fn detect_launch_surface_vscode_extension() {
+        let cmd = "/Users/a/.vscode/extensions/anthropic.claude-code-2.1.269-darwin-arm64/resources/native-binary/claude";
+        assert_eq!(
+            ClaudeCollector::detect_launch_surface(cmd),
+            LaunchSurface::Ide
+        );
+    }
+
+    #[test]
+    fn detect_launch_surface_plain_cli_install() {
+        assert_eq!(
+            ClaudeCollector::detect_launch_surface("/usr/local/bin/claude"),
+            LaunchSurface::Cli
+        );
+        assert_eq!(
+            ClaudeCollector::detect_launch_surface("claude --session-id abc"),
+            LaunchSurface::Cli
+        );
+    }
+
+    #[test]
+    fn detect_launch_surface_autoupdater_versions_layout_is_cli() {
+        // The auto-updater's `<name>/versions/<ver>` layout (see
+        // `cmd_has_binary_autoupdater_layout` in process.rs) is a plain CLI
+        // install, not the desktop app — it must not match on "claude" alone.
+        assert_eq!(
+            ClaudeCollector::detect_launch_surface(
+                "/Users/a/.local/share/claude/versions/2.1.121 --allow-dangerously-skip-permissions",
+            ),
+            LaunchSurface::Cli
+        );
+    }
 
     fn write_lines(file: &mut tempfile::NamedTempFile, lines: &[&str]) {
         for line in lines {

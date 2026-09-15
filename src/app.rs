@@ -1416,10 +1416,12 @@ fn is_killable_agent_command(cmd: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::LaunchSurface;
 
     fn waiting_session(cli: &'static str) -> AgentSession {
         AgentSession {
             agent_cli: cli,
+            launch_surface: LaunchSurface::Cli,
             pid: 1,
             session_id: String::new(),
             cwd: String::new(),
