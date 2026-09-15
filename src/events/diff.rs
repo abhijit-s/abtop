@@ -407,7 +407,7 @@ fn diff_mcp_servers(prev: &Snapshot, next: &Snapshot, out: &mut Vec<AppEvent>) {
 mod tests {
     use super::*;
     use crate::host_info::{AgentAggregate, HostMetrics};
-    use crate::model::{OrphanPort, RateLimitInfo, SessionStatus};
+    use crate::model::{LaunchSurface, OrphanPort, RateLimitInfo, SessionStatus};
     use crate::snapshot::{McpServerView, SessionView, Snapshot, ToolCallView};
 
     fn empty_snapshot() -> Snapshot {
@@ -427,6 +427,7 @@ mod tests {
     fn session(id: &str, status: SessionStatus, pct: f64) -> SessionView {
         SessionView {
             agent_cli: "claude",
+            launch_surface: LaunchSurface::Cli,
             pid: 1,
             session_id: id.to_string(),
             project_name: String::new(),
